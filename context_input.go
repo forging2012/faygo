@@ -713,7 +713,6 @@ func (ctx *Context) BodyBytes() []byte {
 	return limitedRequestBody
 }
 
-//test
 // Session returns current session item value by a given key.
 // if non-existed, return nil.
 func (ctx *Context) Session(key interface{}) interface{} {
