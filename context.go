@@ -12,20 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package thinkgo
+package faygo
 
 import (
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"path"
 	"sync"
 
-	"github.com/henrylee2cn/thinkgo/logging"
-	"github.com/henrylee2cn/thinkgo/session"
-	"github.com/henrylee2cn/thinkgo/utils"
+	"github.com/henrylee2cn/faygo/logging"
+	"github.com/henrylee2cn/faygo/session"
+	"github.com/henrylee2cn/faygo/utils"
 )
 
 // Headers
@@ -106,7 +107,7 @@ const (
 const (
 	// stopExecutionposition used inside the Context,
 	// is the number which shows us that the context's handlerChain manualy stop the execution
-	stopExecutionposition = 125
+	stopExecutionposition int16 = math.MaxInt16 - 1
 )
 
 type (
@@ -123,21 +124,21 @@ type (
 		limitedRequestBody []byte // the copy of requset body(Limited by maximum length)
 		frame              *Framework
 		handlerChain       HandlerChain                // keep track all registed handlers
-		pathParams         Params                      // The parameter values on the URL path
+		pathParams         PathParams                  // The parameter values on the URL path
 		queryParams        url.Values                  // URL query string values
 		data               map[interface{}]interface{} // Used to transfer variables between Handler-chains
-		handlerChainLen    int8
-		pos                int8 // pos is the position number of the Context, look .Next to understand
-		enableGzip         bool // Note: Never reset!
-		enableSession      bool // Note: Never reset!
-		enableXSRF         bool // Note: Never reset!
+		handlerChainLen    int16
+		pos                int16 // pos is the position number of the Context, look .Next to understand
+		enableGzip         bool  // Note: Never reset!
+		enableSession      bool  // Note: Never reset!
+		enableXSRF         bool  // Note: Never reset!
 		xsrfExpire         int
 		_xsrfToken         string
 		_xsrfTokenReset    bool
 	}
 )
 
-// The log used by the user bissness
+// Log used by the user bissness
 func (ctx *Context) Log() *logging.Logger {
 	return ctx.frame.bizlog
 }
@@ -149,7 +150,7 @@ func (ctx *Context) XSRFToken(specifiedExpiration ...int) string {
 		token, ok := ctx.SecureCookieParam(ctx.frame.config.XSRF.Key, "_xsrf")
 		if !ok {
 			ctx._xsrfTokenReset = true
-			token = string(utils.RandomCreateBytes(32))
+			token = string(utils.RandomBytes(32))
 			if len(specifiedExpiration) > 0 && specifiedExpiration[0] > 0 {
 				ctx.xsrfExpire = specifiedExpiration[0]
 			} else if ctx.xsrfExpire == 0 {
@@ -195,7 +196,7 @@ func (ctx *Context) checkXSRFCookie() bool {
 // StartSession starts session and load old session data info this controller.
 func (ctx *Context) StartSession() (session.Store, error) {
 	if !ctx.enableSession {
-		return nil, errors.New("session function is disable.")
+		return nil, errors.New("before using the session, must set config `session::enable = true`...")
 	}
 	if ctx.CruSession != nil {
 		return ctx.CruSession, nil
@@ -209,6 +210,7 @@ func (ctx *Context) StartSession() (session.Store, error) {
 func (ctx *Context) SetSession(key interface{}, value interface{}) {
 	if ctx.CruSession == nil {
 		if _, err := ctx.StartSession(); err != nil {
+			ctx.Log().Warning(err.Error())
 			return
 		}
 	}
@@ -219,6 +221,7 @@ func (ctx *Context) SetSession(key interface{}, value interface{}) {
 func (ctx *Context) GetSession(key interface{}) interface{} {
 	if ctx.CruSession == nil {
 		if _, err := ctx.StartSession(); err != nil {
+			ctx.Log().Warning(err.Error())
 			return nil
 		}
 	}
@@ -229,6 +232,7 @@ func (ctx *Context) GetSession(key interface{}) interface{} {
 func (ctx *Context) DelSession(key interface{}) {
 	if ctx.CruSession == nil {
 		if _, err := ctx.StartSession(); err != nil {
+			ctx.Log().Warning(err.Error())
 			return
 		}
 	}
@@ -240,6 +244,7 @@ func (ctx *Context) DelSession(key interface{}) {
 func (ctx *Context) SessionRegenerateID() {
 	if ctx.CruSession == nil {
 		if _, err := ctx.StartSession(); err != nil {
+			ctx.Log().Warning(err.Error())
 			return
 		}
 	}
@@ -251,6 +256,7 @@ func (ctx *Context) SessionRegenerateID() {
 func (ctx *Context) DestroySession() {
 	if ctx.CruSession == nil {
 		if _, err := ctx.StartSession(); err != nil {
+			ctx.Log().Warning(err.Error())
 			return
 		}
 	}
@@ -320,46 +326,32 @@ func (ctx *Context) ReverseProxy(targetUrlBase string, pathAppend bool) error {
 	return nil
 }
 
-// Create the context for the router handle
-func newEmptyContext(
-	frame *Framework,
-	w http.ResponseWriter,
-	r *http.Request,
-) *Context {
-	ctx := &Context{
-		frame:      frame,
-		R:          r,
-		enableGzip: Global.config.Gzip.Enable,
-	}
-	ctx.W = newResponse(ctx, w)
-	return ctx
-}
-
-// Create the context for common handle
-func newContext(
-	frame *Framework,
-	handlerChain HandlerChain,
-) *Context {
-	count := len(handlerChain)
-	chain := make(HandlerChain, count)
-	copy(chain, handlerChain)
-	for i, h := range chain {
-		if h2, ok := h.(*handlerStruct); ok {
-			chain[i] = h2.new()
+func (ctx *Context) doFilter() bool {
+	if count := len(ctx.frame.filter); count > 0 {
+		ctx.handlerChain = ctx.frame.filter
+		ctx.handlerChainLen = int16(count)
+		ctx.posReset()
+		ctx.Next()
+		if ctx.IsBreak() {
+			if !ctx.W.Committed() {
+				ctx.Error(http.StatusForbidden, http.StatusText(http.StatusForbidden))
+			}
+			return false
 		}
 	}
-	ctx := &Context{
-		frame:           frame,
-		handlerChain:    chain,
-		handlerChainLen: int8(count),
-		pos:             0,
-		enableGzip:      Global.config.Gzip.Enable,
-		enableSession:   frame.config.Session.Enable,
-		enableXSRF:      frame.config.XSRF.Enable,
-		data:            make(map[interface{}]interface{}),
+	return true
+}
+
+// doHandler calls the first handler only, it's like Next with negative pos, used only on Router&MemoryRouter
+func (ctx *Context) doHandler(handlerChain HandlerChain, pathParams PathParams) {
+	ctx.pathParams = pathParams
+	ctx.handlerChain = handlerChain
+	ctx.handlerChainLen = int16(len(handlerChain))
+	ctx.posReset()
+	if !ctx.prepare() {
+		return
 	}
-	ctx.W = newResponse(ctx, nil)
-	return ctx
+	ctx.Next()
 }
 
 // Called before the start
@@ -381,47 +373,47 @@ func (ctx *Context) prepare() bool {
 	return pass
 }
 
-// start calls the first handler only, it's like Next with negative pos, used only on Router&MemoryRouter
-func (ctx *Context) start() {
-	if !ctx.prepare() {
-		return
-	}
+// reset the cursor
+func (ctx *Context) posReset() {
 	ctx.pos = -1
-	ctx.Next()
 }
 
-// Next calls all the next handler from the middleware stack, it used inside a middleware
+// Next calls all the next handler from the middleware stack, it used inside a middleware.
+// Notes: Non-concurrent security.
 func (ctx *Context) Next() {
 	//set position to the next
 	ctx.pos++
 	//run the next
 	if ctx.pos < ctx.handlerChainLen {
 		switch h := ctx.handlerChain[ctx.pos].(type) {
-		case *handlerStruct:
+		case *apiHandler:
+			h = h.new()
 			err := h.bind(ctx.R, ctx.pathParams)
 			defer h.reset()
 			if err != nil {
-				Global.bindErrorFunc(ctx, err)
+				global.binderrorFunc(ctx, err)
 				ctx.Stop()
 				return
 			}
 			err = h.Serve(ctx)
 			if err != nil {
-				Global.errorFunc(ctx, err.Error(), http.StatusInternalServerError)
+				global.errorFunc(ctx, err.Error(), http.StatusInternalServerError)
 				ctx.Stop()
 				return
 			}
 		default:
 			err := h.Serve(ctx)
 			if err != nil {
-				Global.errorFunc(ctx, err.Error(), http.StatusInternalServerError)
+				global.errorFunc(ctx, err.Error(), http.StatusInternalServerError)
 				ctx.Stop()
 				return
 			}
 		}
 		// If the next one exists, it is executed automatically.
 		ctx.Next()
+		return
 	}
+	ctx.pos--
 }
 
 func (ctx *Context) beforeWriteHeader() {
@@ -436,20 +428,29 @@ func (ctx *Context) beforeWriteHeader() {
 	}
 }
 
-// Stop just sets the .pos to 125 in order to  not move to the next handlers(if any)
+// Stop just sets the .pos to 32766 in order to  not move to the next handlers(if any)
 func (ctx *Context) Stop() {
 	ctx.pos = stopExecutionposition
 }
 
+// Stopped returns whether the operation has stopped.
+func (ctx *Context) Stopped() bool {
+	return ctx.pos >= ctx.handlerChainLen
+}
+
+// IsBreak returns whether the operation is stopped halfway.
+func (ctx *Context) IsBreak() bool {
+	return ctx.pos == stopExecutionposition
+}
+
 // reset ctx.
 // Note: Never reset `ctx.frame`, `ctx.W`, `ctx.enableGzip`, `ctx.enableSession` and `ctx.enableXSRF`!
-func (ctx *Context) reset(w http.ResponseWriter, r *http.Request, pathParams Params) {
+func (ctx *Context) reset(w http.ResponseWriter, r *http.Request) {
 	ctx.limitedRequestBody = nil
 	ctx.data = nil
 	ctx.queryParams = nil
 	ctx._xsrfToken = ""
 	ctx._xsrfTokenReset = false
-	ctx.pathParams = pathParams
 	ctx.W.reset(w)
 	ctx.R = r
 }

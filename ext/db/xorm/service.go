@@ -3,20 +3,22 @@ package xorm
 import (
 	"os"
 	"path/filepath"
-	"time"
+	"strings"
 
 	"github.com/go-xorm/core"
 	"github.com/go-xorm/xorm"
 
-	"github.com/henrylee2cn/thinkgo"
-	"github.com/henrylee2cn/thinkgo/utils"
 	// _ "github.com/denisenkom/go-mssqldb" //mssql
-	// _ "github.com/go-sql-driver/mysql"   //mysql
-	// _ "github.com/lib/pq"                //postgres
+	_ "github.com/go-sql-driver/mysql" //mysql
+	_ "github.com/lib/pq"              //postgres
+	// _ "github.com/mattn/go-oci8"         //oracle(need to install the pkg-config utility)
 	// _ "github.com/mattn/go-sqlite3"      //sqlite
-	// _ "github.com/mattn/go-oci8"    //oracle(need to install the pkg-config utility)
+
+	"github.com/henrylee2cn/faygo"
+	"github.com/henrylee2cn/faygo/utils"
 )
 
+// DBService is a database engine object.
 type DBService struct {
 	Default *xorm.Engine            // the default database engine
 	List    map[string]*xorm.Engine // database engine list
@@ -26,26 +28,38 @@ var dbService = func() (serv *DBService) {
 	serv = &DBService{
 		List: map[string]*xorm.Engine{},
 	}
-
+	var errs []string
 	defer func() {
+		if len(errs) > 0 {
+			panic("[xorm] " + strings.Join(errs, "\n"))
+		}
 		if serv.Default == nil {
-			time.Sleep(2e9)
+			faygo.Panicf("[xorm] the `default` database engine must be configured and enabled")
 		}
 	}()
 
 	err := loadDBConfig()
 	if err != nil {
-		thinkgo.Error(err.Error())
+		faygo.Panicf("[xorm]", err.Error())
 		return
 	}
 
 	for _, conf := range dbConfigs {
-		engine, err := xorm.NewEngine(conf.Driver, conf.Connstring)
-		if err != nil {
-			thinkgo.Error(err.Error())
+		if !conf.Enable {
 			continue
 		}
-
+		engine, err := xorm.NewEngine(conf.Driver, conf.Connstring)
+		if err != nil {
+			faygo.Critical("[xorm]", err.Error())
+			errs = append(errs, err.Error())
+			continue
+		}
+		err = engine.Ping()
+		if err != nil {
+			faygo.Critical("[xorm]", err.Error())
+			errs = append(errs, err.Error())
+			continue
+		}
 		engine.SetLogger(iLogger)
 		engine.SetMaxOpenConns(conf.MaxOpenConns)
 		engine.SetMaxIdleConns(conf.MaxIdleConns)
@@ -85,7 +99,8 @@ var dbService = func() (serv *DBService) {
 			os.MkdirAll(filepath.Dir(conf.Connstring), 0777)
 			f, err := os.Create(conf.Connstring)
 			if err != nil {
-				thinkgo.Error(err.Error())
+				faygo.Critical("[xorm]", err.Error())
+				errs = append(errs, err.Error())
 			} else {
 				f.Close()
 			}

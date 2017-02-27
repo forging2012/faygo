@@ -12,13 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package thinkgo
+package faygo
 
 import (
 	"bytes"
 	"crypto/hmac"
 	"crypto/sha1"
 	"encoding/base64"
+	"encoding/json"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
@@ -33,7 +35,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/henrylee2cn/thinkgo/utils"
+	"github.com/henrylee2cn/faygo/apiware"
+	"github.com/henrylee2cn/faygo/utils"
 )
 
 // Regexes for checking the accept headers
@@ -54,9 +57,19 @@ func (ctx *Context) URI() string {
 	return ctx.R.RequestURI
 }
 
+// URL returns full request url with query string, fragment.
+func (ctx *Context) URL() *url.URL {
+	return ctx.R.URL
+}
+
 // Path returns request url path (without query string, fragment).
 func (ctx *Context) Path() string {
 	return ctx.R.URL.Path
+}
+
+// ModifyPath modifies the access path for the request.
+func (ctx *Context) ModifyPath(p string) {
+	ctx.R.URL.Path = p
 }
 
 // Scheme returns request scheme as "http" or "https".
@@ -73,78 +86,40 @@ func (ctx *Context) Scheme() string {
 	return "https"
 }
 
-// Site returns base site url as scheme://host type.
+// Site returns base site url as `scheme://domain:port` type.
 func (ctx *Context) Site() string {
-	return ctx.Scheme() + "://" + ctx.Host()
+	return ctx.Scheme() + "://" + ctx.R.Host
 }
 
-// HostWithPort returns a host:port string for this request,
-// such as "example.com" or "example.com:8080".
-func (ctx *Context) HostWithPort() string {
-	if ctx.R.Host != "" {
-		if strings.Contains(ctx.R.Host, ":") {
-			return ctx.R.Host
-		}
-		return ctx.R.Host + ":80"
-	}
-	return "localhost:80"
-}
-
-// Host returns host name.
-// `host` is `subDomain.domain`.
-// if no host info in request, return localhost.
+// Host returns a host:port string for this request,
+// such as "www.example.com" or "www.example.com:8080".
 func (ctx *Context) Host() string {
-	if ctx.R.Host != "" {
-		hostParts := strings.Split(ctx.R.Host, ":")
-		if len(hostParts) > 0 {
-			return hostParts[0]
-		}
-		return ctx.R.Host
-	}
-	return "localhost"
+	return ctx.R.Host
 }
 
-// Domain returns domain name.
-// `host` is `subDomain.domain`.
-// if aa.bb.domain.com, returns aa.bb .
-// if no host info in request, return localhost.
+// Domain returns domain as `www.example.com` style.
 func (ctx *Context) Domain() string {
-	parts := strings.Split(ctx.Host(), ".")
-	if len(parts) >= 3 {
-		return strings.Join(parts[len(parts)-2:], ".")
-	}
-	return "localhost"
+	return strings.Split(ctx.R.Host, ":")[0]
 }
 
-// SubDomain returns sub domain string.
-// `host` is `subDomain.domain`.
-// if aa.bb.domain.com, returns aa.bb .
-func (ctx *Context) SubDomain() string {
-	parts := strings.Split(ctx.Host(), ".")
-	if len(parts) >= 3 {
-		return strings.Join(parts[:len(parts)-2], ".")
-	}
-	return ""
-}
-
-// Port returns host port for this request.
-// when error or empty, return 80.
+// Port returns the port number of request.
 func (ctx *Context) Port() int {
 	parts := strings.Split(ctx.R.Host, ":")
-	if len(parts) == 2 {
-		port, _ := strconv.Atoi(parts[1])
-		return port
+	if len(parts) == 1 {
+		return 80
 	}
-	return 80
+	port, _ := strconv.Atoi(parts[1])
+	return port
 }
 
 // IP gets just the ip from the most direct one client.
 func (ctx *Context) IP() string {
-	var ip = strings.Split(ctx.R.RemoteAddr, ":")
-	if len(ip) > 0 {
-		if ip[0] != "[" {
-			return ip[0]
-		}
+	ip := strings.Split(ctx.R.RemoteAddr, ":")[0]
+	if len(ip) == 0 {
+		return ""
+	}
+	if ip[0] != '[' {
+		return ip
 	}
 	return "127.0.0.1"
 }
@@ -159,8 +134,14 @@ func (ctx *Context) RealIP() string {
 	}
 	ips := ctx.Proxy()
 	if len(ips) > 0 && ips[0] != "" {
-		rip := strings.Split(ips[0], ":")
-		return rip[0]
+		ip = strings.Split(ips[0], ":")[0]
+		if len(ip) == 0 {
+			return ""
+		}
+		if ip[0] != '[' {
+			return ip
+		}
+		return "127.0.0.1"
 	}
 	return ctx.IP()
 }
@@ -263,20 +244,26 @@ func (ctx *Context) UserAgent() string {
 	return ctx.HeaderParam(HeaderUserAgent)
 }
 
-// Data return the implicit data in the context
-func (ctx *Context) Data() map[interface{}]interface{} {
-	if ctx.data == nil {
-		ctx.data = make(map[interface{}]interface{})
-	}
-	return ctx.data
-}
-
-// GetData returns the stored data in this context.
-func (ctx *Context) GetData(key interface{}) interface{} {
+// Data returns the stored data in this context.
+func (ctx *Context) Data(key interface{}) interface{} {
 	if v, ok := ctx.data[key]; ok {
 		return v
 	}
 	return nil
+}
+
+// HasData checks if the key exists in the context.
+func (ctx *Context) HasData(key interface{}) bool {
+	_, ok := ctx.data[key]
+	return ok
+}
+
+// DataAll return the implicit data in the context
+func (ctx *Context) DataAll() map[interface{}]interface{} {
+	if ctx.data == nil {
+		ctx.data = make(map[interface{}]interface{})
+	}
+	return ctx.data
 }
 
 // SetData stores data with given key in this context.
@@ -286,12 +273,6 @@ func (ctx *Context) SetData(key, val interface{}) {
 		ctx.data = make(map[interface{}]interface{})
 	}
 	ctx.data[key] = val
-}
-
-// Contains checks if the key exists in the context.
-func (ctx *Context) Contains(key interface{}) bool {
-	_, ok := ctx.data[key]
-	return ok
 }
 
 // Param returns the first value for the kinds of parameters.
@@ -313,7 +294,7 @@ func (ctx *Context) Param(key string) string {
 	if len(value) > 0 {
 		return value
 	}
-	if cookie, err := ctx.R.Cookie(key); err != nil {
+	if cookie, _ := ctx.R.Cookie(key); cookie != nil {
 		return cookie.Value
 	}
 	return value
@@ -340,13 +321,25 @@ func (ctx *Context) BizParam(key string) string {
 	return ctx.R.FormValue(key)
 }
 
+// BindBizParam data from ctx.BizParam(key) to dest
+//  like /?id=123&isok=true&ft=1.2&ol[0]=1&ol[1]=2&ul[]=str&ul[]=array&user.Name=abc
+//  var id int  ctx.BindBizParam(&id, "id")  id ==123
+//  var isok bool  ctx.BindBizParam(&isok, "isok")  isok ==true
+//  var ft float64  ctx.BindBizParam(&ft, "ft")  ft ==1.2
+//  ol := make([]int, 0, 2)  ctx.BindBizParam(&ol, "ol")  ol ==[1 2]
+//  ul := make([]string, 0, 2)  ctx.BindBizParam(&ul, "ul")  ul ==[str array]
+//  user struct{Name}  ctx.BindBizParam(&user, "user")  user == {Name:"abc"}
+func (ctx *Context) BindBizParam(dest interface{}, key string) error {
+	return apiware.ConvertAssign(reflect.ValueOf(dest), ctx.BizParam(key))
+}
+
 // PathParam returns path param by key.
 func (ctx *Context) PathParam(key string) string {
 	return ctx.pathParams.ByName(key)
 }
 
 // PathParamAll returns whole path parameters.
-func (ctx *Context) PathParamAll() Params {
+func (ctx *Context) PathParamAll() PathParams {
 	return ctx.pathParams
 }
 
@@ -390,6 +383,39 @@ func (ctx *Context) FormParamAll() url.Values {
 		ctx.R.ParseMultipartForm(ctx.frame.config.multipartMaxMemory)
 	}
 	return ctx.R.PostForm
+}
+
+const (
+	// TAG_PARAM param tag
+	TAG_PARAM = apiware.TAG_PARAM
+)
+
+// BindForm reads form data from request's body
+func (ctx *Context) BindForm(structObject interface{}) error {
+	value := reflect.ValueOf(structObject)
+	if value.Kind() != reflect.Ptr {
+		return errors.New("`*Context.BindForm` accepts only parameter of struct pointer type")
+	}
+	value = reflect.Indirect(value)
+	if value.Kind() != reflect.Struct {
+		return errors.New("`*Context.BindForm` accepts only parameter of struct pointer type")
+	}
+	t := value.Type()
+	for i, count := 0, t.NumField(); i < count; i++ {
+		fieldT := t.Field(i)
+		if fieldT.Anonymous {
+			continue
+		}
+		var key = fieldT.Tag.Get(TAG_PARAM)
+		if key == "" {
+			key = MapParamName(fieldT.Name)
+		}
+		err := apiware.ConvertAssign(value.Field(i), ctx.FormParams(key)...)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // QueryParam gets the first query value associated with the given key.
@@ -473,10 +499,29 @@ func (ctx *Context) FormFile(key string) (multipart.File, *multipart.FileHeader,
 	return ctx.R.FormFile(key)
 }
 
-// SaveFile saves the file *Context.FormFile to Global.uploadDir,
+// HasFormFile returns if the file header for the provided form key is exist.
+func (ctx *Context) HasFormFile(key string) bool {
+	if ctx.R.MultipartForm == nil {
+		ctx.R.ParseMultipartForm(ctx.frame.config.multipartMaxMemory)
+	}
+	if ctx.R.MultipartForm != nil && ctx.R.MultipartForm.File != nil {
+		if fhs := ctx.R.MultipartForm.File[key]; len(fhs) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// SavedFileInfo for SaveFiles()
+type SavedFileInfo struct {
+	Url  string
+	Size int64
+}
+
+// SaveFile saves the uploaded file to global.UploadDir(),
 // character "?" indicates that the original file name.
-// for example newfname="a/?" -> Global.uploadDir/a/fname.
-func (ctx *Context) SaveFile(key string, cover bool, newfname ...string) (fileUrl string, size int64, err error) {
+// for example newfname="a/?" -> global.UploadDir()/a/fname.
+func (ctx *Context) SaveFile(key string, cover bool, newfname ...string) (savedFileInfo SavedFileInfo, err error) {
 	f, fh, err := ctx.R.FormFile(key)
 	if err != nil {
 		return
@@ -491,16 +536,16 @@ func (ctx *Context) SaveFile(key string, cover bool, newfname ...string) (fileUr
 	// Sets the full file name
 	var fullname string
 	if len(newfname) == 0 {
-		fullname = filepath.Join(Global.uploadDir, fh.Filename)
+		fullname = filepath.Join(UploadDir(), fh.Filename)
 	} else {
 		if strings.Contains(newfname[0], "?") {
-			fullname = filepath.Join(Global.uploadDir, strings.Replace(newfname[0], "?", fh.Filename, -1))
+			fullname = filepath.Join(UploadDir(), strings.Replace(newfname[0], "?", fh.Filename, -1))
 		} else {
 			fname := strings.TrimRight(newfname[0], ".")
 			if filepath.Ext(fname) == "" {
-				fullname = filepath.Join(Global.uploadDir, fname+filepath.Ext(fh.Filename))
+				fullname = filepath.Join(UploadDir(), fname+filepath.Ext(fh.Filename))
 			} else {
-				fullname = filepath.Join(Global.uploadDir, fname)
+				fullname = filepath.Join(UploadDir(), fname)
 			}
 		}
 	}
@@ -521,14 +566,14 @@ func (ctx *Context) SaveFile(key string, cover bool, newfname ...string) (fileUr
 	fullname = _fullname
 
 	// Create the URL of the file
-	fileUrl = "/" + strings.Replace(fullname, `\`, `/`, -1)
+	savedFileInfo.Url = "/" + strings.Replace(fullname, `\`, `/`, -1)
 
 	// Save the file to local
 	f2, err := os.OpenFile(fullname, os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return
 	}
-	size, err = io.Copy(f2, f)
+	savedFileInfo.Size, err = io.Copy(f2, f)
 	err3 := f2.Close()
 	if err3 != nil && err == nil {
 		err = err3
@@ -536,10 +581,118 @@ func (ctx *Context) SaveFile(key string, cover bool, newfname ...string) (fileUr
 	return
 }
 
-// Session returns current session item value by a given key.
-// if non-existed, return nil.
-func (ctx *Context) Session(key interface{}) interface{} {
-	return ctx.CruSession.Get(key)
+// SaveFiles saves the uploaded files to global.UploadDir(),
+// it's similar to SaveFile, but for saving multiple files.
+func (ctx *Context) SaveFiles(key string, cover bool, newfname ...string) (savedFileInfos []SavedFileInfo, err error) {
+	if !ctx.HasFormFile(key) {
+		err = errors.New("there are no file param: " + key)
+		return
+	}
+	files := ctx.R.MultipartForm.File[key]
+	hasFilename := len(newfname) > 0
+	filemap := map[string]int{}
+	for _, fh := range files {
+		var f multipart.File
+		f, err = fh.Open()
+		if err != nil {
+			return
+		}
+		defer func() {
+			err2 := f.Close()
+			if err2 != nil && err == nil {
+				err = err2
+			}
+		}()
+
+		// Sets the full file name
+		var fullname string
+		if !hasFilename {
+			fullname = filepath.Join(UploadDir(), fh.Filename)
+		} else {
+			if strings.Contains(newfname[0], "?") {
+				fullname = filepath.Join(UploadDir(), strings.Replace(newfname[0], "?", fh.Filename, -1))
+			} else {
+				fname := strings.TrimRight(newfname[0], ".")
+				if filepath.Ext(fname) == "" {
+					fullname = filepath.Join(UploadDir(), fname+filepath.Ext(fh.Filename))
+				} else {
+					fullname = filepath.Join(UploadDir(), fname)
+				}
+			}
+		}
+
+		// If the file with the same name exists, add the suffix of the serial number
+		idx := strings.LastIndex(fullname, filepath.Ext(fullname))
+		num := filemap[fullname]
+		_fullname := fullname
+		num++
+		if num >= 2 {
+			_fullname = fmt.Sprintf("%s(%d)%s", fullname[:idx], num, fullname[idx:])
+		}
+		for utils.FileExists(_fullname) && !cover {
+			num++
+			_fullname = fmt.Sprintf("%s(%d)%s", fullname[:idx], num, fullname[idx:])
+		}
+		filemap[fullname] = num
+		fullname = _fullname
+
+		var info SavedFileInfo
+
+		// Create the URL of the file
+		info.Url = "/" + strings.Replace(fullname, `\`, `/`, -1)
+
+		// Save the file to local
+		var f2 *os.File
+		f2, err = os.OpenFile(fullname, os.O_CREATE|os.O_WRONLY, 0644)
+		if err != nil {
+			// Create the completion file path
+			p, _ := filepath.Split(fullname)
+			err = os.MkdirAll(p, 0777)
+			if err != nil {
+				return
+			}
+			f2, err = os.OpenFile(fullname, os.O_CREATE|os.O_WRONLY, 0644)
+			if err != nil {
+				return
+			}
+		}
+		info.Size, err = io.Copy(f2, f)
+		err3 := f2.Close()
+		if err3 != nil && err == nil {
+			err = err3
+			return
+		}
+		savedFileInfos = append(savedFileInfos, info)
+	}
+	return
+}
+
+// BindJSON reads JSON from request's body
+func (ctx *Context) BindJSON(jsonObject interface{}) error {
+	rawData, _ := ioutil.ReadAll(ctx.R.Body)
+	// check if jsonObject is already a pointer, if yes then pass as it's
+	if reflect.TypeOf(jsonObject).Kind() == reflect.Ptr {
+		err := json.Unmarshal(rawData, jsonObject)
+		if err != nil {
+			return err
+		}
+	}
+	// finally, if the jsonObject is not a pointer
+	return json.Unmarshal(rawData, &jsonObject)
+}
+
+// BindXML reads XML from request's body
+func (ctx *Context) BindXML(xmlObject interface{}) error {
+	rawData, _ := ioutil.ReadAll(ctx.R.Body)
+	// check if xmlObject is already a pointer, if yes then pass as it's
+	if reflect.TypeOf(xmlObject).Kind() == reflect.Ptr {
+		err := xml.Unmarshal(rawData, xmlObject)
+		if err != nil {
+			return err
+		}
+	}
+	// finally, if the xmlObject is not a pointer
+	return xml.Unmarshal(rawData, &xmlObject)
 }
 
 // BodyBytes returns the raw request body data as bytes.
@@ -560,246 +713,8 @@ func (ctx *Context) BodyBytes() []byte {
 	return limitedRequestBody
 }
 
-// BizBind data from ctx.BizParam(key) to dest
-// like /?id=123&isok=true&ft=1.2&ol[0]=1&ol[1]=2&ul[]=str&ul[]=array&user.Name=abc
-// var id int  ctx.BizBind(&id, "id")  id ==123
-// var isok bool  ctx.BizBind(&isok, "isok")  isok ==true
-// var ft float64  ctx.BizBind(&ft, "ft")  ft ==1.2
-// ol := make([]int, 0, 2)  ctx.BizBind(&ol, "ol")  ol ==[1 2]
-// ul := make([]string, 0, 2)  ctx.BizBind(&ul, "ul")  ul ==[str array]
-// user struct{Name}  ctx.BizBind(&user, "user")  user == {Name:"abc"}
-func (ctx *Context) BizBind(dest interface{}, key string) error {
-	value := reflect.ValueOf(dest)
-	if value.Kind() != reflect.Ptr {
-		return errors.New("thinkgo: non-pointer passed to Bind: " + key)
-	}
-	value = value.Elem()
-	if !value.CanSet() {
-		return errors.New("thinkgo: non-settable variable passed to Bind: " + key)
-	}
-	rv := ctx.bind(key, value.Type())
-	if !rv.IsValid() {
-		return errors.New("thinkgo: reflect value is empty")
-	}
-	value.Set(rv)
-	return nil
-}
-
-func (ctx *Context) bind(key string, typ reflect.Type) reflect.Value {
-	rv := reflect.Zero(typ)
-	switch typ.Kind() {
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		val := ctx.BizParam(key)
-		if len(val) == 0 {
-			return rv
-		}
-		rv = ctx.bindInt(val, typ)
-	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		val := ctx.BizParam(key)
-		if len(val) == 0 {
-			return rv
-		}
-		rv = ctx.bindUint(val, typ)
-	case reflect.Float32, reflect.Float64:
-		val := ctx.BizParam(key)
-		if len(val) == 0 {
-			return rv
-		}
-		rv = ctx.bindFloat(val, typ)
-	case reflect.String:
-		val := ctx.BizParam(key)
-		if len(val) == 0 {
-			return rv
-		}
-		rv = ctx.bindString(val, typ)
-	case reflect.Bool:
-		val := ctx.BizParam(key)
-		if len(val) == 0 {
-			return rv
-		}
-		rv = ctx.bindBool(val, typ)
-	case reflect.Slice:
-		rv = ctx.bindSlice(&ctx.R.Form, key, typ)
-	case reflect.Struct:
-		rv = ctx.bindStruct(&ctx.R.Form, key, typ)
-	case reflect.Ptr:
-		rv = ctx.bindPoint(key, typ)
-	case reflect.Map:
-		rv = ctx.bindMap(&ctx.R.Form, key, typ)
-	}
-	return rv
-}
-
-func (ctx *Context) bindValue(val string, typ reflect.Type) reflect.Value {
-	rv := reflect.Zero(typ)
-	switch typ.Kind() {
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		rv = ctx.bindInt(val, typ)
-	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		rv = ctx.bindUint(val, typ)
-	case reflect.Float32, reflect.Float64:
-		rv = ctx.bindFloat(val, typ)
-	case reflect.String:
-		rv = ctx.bindString(val, typ)
-	case reflect.Bool:
-		rv = ctx.bindBool(val, typ)
-	case reflect.Slice:
-		rv = ctx.bindSlice(&url.Values{"": {val}}, "", typ)
-	case reflect.Struct:
-		rv = ctx.bindStruct(&url.Values{"": {val}}, "", typ)
-	case reflect.Ptr:
-		rv = ctx.bindPoint(val, typ)
-	case reflect.Map:
-		rv = ctx.bindMap(&url.Values{"": {val}}, "", typ)
-	}
-	return rv
-}
-
-func (ctx *Context) bindInt(val string, typ reflect.Type) reflect.Value {
-	intValue, err := strconv.ParseInt(val, 10, 64)
-	if err != nil {
-		return reflect.Zero(typ)
-	}
-	pValue := reflect.New(typ)
-	pValue.Elem().SetInt(intValue)
-	return pValue.Elem()
-}
-
-func (ctx *Context) bindUint(val string, typ reflect.Type) reflect.Value {
-	uintValue, err := strconv.ParseUint(val, 10, 64)
-	if err != nil {
-		return reflect.Zero(typ)
-	}
-	pValue := reflect.New(typ)
-	pValue.Elem().SetUint(uintValue)
-	return pValue.Elem()
-}
-
-func (ctx *Context) bindFloat(val string, typ reflect.Type) reflect.Value {
-	floatValue, err := strconv.ParseFloat(val, 64)
-	if err != nil {
-		return reflect.Zero(typ)
-	}
-	pValue := reflect.New(typ)
-	pValue.Elem().SetFloat(floatValue)
-	return pValue.Elem()
-}
-
-func (ctx *Context) bindString(val string, typ reflect.Type) reflect.Value {
-	return reflect.ValueOf(val)
-}
-
-func (ctx *Context) bindBool(val string, typ reflect.Type) reflect.Value {
-	val = strings.TrimSpace(strings.ToLower(val))
-	switch val {
-	case "true", "on", "1":
-		return reflect.ValueOf(true)
-	}
-	return reflect.ValueOf(false)
-}
-
-type sliceValue struct {
-	index int           // Index extracted from brackets.  If -1, no index was provided.
-	value reflect.Value // the bound value for this slice element.
-}
-
-func (ctx *Context) bindSlice(params *url.Values, key string, typ reflect.Type) reflect.Value {
-	maxIndex := -1
-	numNoIndex := 0
-	sliceValues := []sliceValue{}
-	for reqKey, vals := range *params {
-		if !strings.HasPrefix(reqKey, key+"[") {
-			continue
-		}
-		// Extract the index, and the index where a sub-key starts. (e.g. field[0].subkey)
-		index := -1
-		leftBracket, rightBracket := len(key), strings.Index(reqKey[len(key):], "]")+len(key)
-		if rightBracket > leftBracket+1 {
-			index, _ = strconv.Atoi(reqKey[leftBracket+1 : rightBracket])
-		}
-		subKeyIndex := rightBracket + 1
-
-		// Handle the indexed case.
-		if index > -1 {
-			if index > maxIndex {
-				maxIndex = index
-			}
-			sliceValues = append(sliceValues, sliceValue{
-				index: index,
-				value: ctx.bind(reqKey[:subKeyIndex], typ.Elem()),
-			})
-			continue
-		}
-
-		// It's an un-indexed element.  (e.g. element[])
-		numNoIndex += len(vals)
-		for _, val := range vals {
-			// Unindexed values can only be direct-bound.
-			sliceValues = append(sliceValues, sliceValue{
-				index: -1,
-				value: ctx.bindValue(val, typ.Elem()),
-			})
-		}
-	}
-	resultArray := reflect.MakeSlice(typ, maxIndex+1, maxIndex+1+numNoIndex)
-	for _, sv := range sliceValues {
-		if sv.index != -1 {
-			resultArray.Index(sv.index).Set(sv.value)
-		} else {
-			resultArray = reflect.Append(resultArray, sv.value)
-		}
-	}
-	return resultArray
-}
-
-func (ctx *Context) bindStruct(params *url.Values, key string, typ reflect.Type) reflect.Value {
-	result := reflect.New(typ).Elem()
-	fieldValues := make(map[string]reflect.Value)
-	for reqKey, val := range *params {
-		var fieldName string
-		if strings.HasPrefix(reqKey, key+".") {
-			fieldName = reqKey[len(key)+1:]
-		} else if strings.HasPrefix(reqKey, key+"[") && reqKey[len(reqKey)-1] == ']' {
-			fieldName = reqKey[len(key)+1 : len(reqKey)-1]
-		} else {
-			continue
-		}
-
-		if _, ok := fieldValues[fieldName]; !ok {
-			// Time to bind this field.  Get it and make sure we can set it.
-			fieldValue := result.FieldByName(fieldName)
-			if !fieldValue.IsValid() {
-				continue
-			}
-			if !fieldValue.CanSet() {
-				continue
-			}
-			boundVal := ctx.bindValue(val[0], fieldValue.Type())
-			fieldValue.Set(boundVal)
-			fieldValues[fieldName] = boundVal
-		}
-	}
-
-	return result
-}
-
-func (ctx *Context) bindPoint(key string, typ reflect.Type) reflect.Value {
-	return ctx.bind(key, typ.Elem()).Addr()
-}
-
-func (ctx *Context) bindMap(params *url.Values, key string, typ reflect.Type) reflect.Value {
-	var (
-		result    = reflect.MakeMap(typ)
-		keyType   = typ.Key()
-		valueType = typ.Elem()
-	)
-	for paramName, values := range *params {
-		if !strings.HasPrefix(paramName, key+"[") || paramName[len(paramName)-1] != ']' {
-			continue
-		}
-
-		key := paramName[len(key)+1 : len(paramName)-1]
-		result.SetMapIndex(ctx.bindValue(key, keyType), ctx.bindValue(values[0], valueType))
-	}
-	return result
+// Session returns current session item value by a given key.
+// if non-existed, return nil.
+func (ctx *Context) Session(key interface{}) interface{} {
+	return ctx.CruSession.Get(key)
 }

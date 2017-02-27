@@ -105,7 +105,7 @@ type Formatter interface {
 	Format(calldepth int, colorful bool, r *Record, w io.Writer) error
 }
 
-// formatter is used by all backends unless otherwise overriden.
+// formatter is used by all backends unless otherwise overridden.
 var formatter struct {
 	sync.RWMutex
 	def Formatter
@@ -311,8 +311,11 @@ func (f *stringFormatter) Format(calldepth int, colorful bool, r *Record, output
 				if !ok {
 					file = "???"
 					line = 0
-				} else if part.verb == fmtVerbShortfile {
+				}
+				if part.verb == fmtVerbShortfile {
 					file = filepath.Base(file)
+				} else if idx := strings.Index(file, "/src/"); idx >= 0 {
+					file = file[idx+5:]
 				}
 				v = fmt.Sprintf("%s:%d", file, line)
 			case fmtVerbLongfunc, fmtVerbShortfunc,
@@ -400,15 +403,20 @@ type backendFormatter struct {
 }
 
 // NewBackendFormatter creates a new backend which makes all records that
-// passes through it beeing formatted by the specific formatter.
+// passes through it being formatted by the specific formatter.
 func NewBackendFormatter(b Backend, f Formatter) Backend {
 	return &backendFormatter{b, f}
 }
 
 // Log implements the Log function required by the Backend interface.
-func (bf *backendFormatter) Log(level Level, calldepth int, r *Record) error {
+func (bf *backendFormatter) Log(calldepth int, r *Record) {
 	// Make a shallow copy of the record and replace any formatter
 	r2 := *r
 	r2.formatter = bf.f
-	return bf.b.Log(level, calldepth+1, &r2)
+	bf.b.Log(calldepth+1, &r2)
+}
+
+// Close closes the log service.
+func (bf *backendFormatter) Close() {
+	bf.b.Close()
 }

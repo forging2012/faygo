@@ -12,34 +12,34 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package thinkgo
+package faygo
 
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"sort"
+	"strings"
 	"sync/atomic"
 	"time"
-
-	"github.com/henrylee2cn/thinkgo/ini"
 )
 
 type (
+	// GlobalConfig is global configuration
 	GlobalConfig struct {
 		Cache   CacheConfig `ini:"cache"`
 		Gzip    GzipConfig  `ini:"gzip"`
 		Log     LogConfig   `ini:"log"`
 		warnMsg string      `int:"-"`
 	}
+	// Config is the configuration information for each web instance
 	Config struct {
 		// RunMode         string      `ini:"run_mode"`         // run mode: dev | prod
-		NetTypes        []string    `ini:"net_types" delim:"|"` // network type: normal | tls | letsencrypt | unix
-		Addrs           []string    `ini:"addrs" delim:"|"`     // service monitoring address
-		TLSCertFile     string      `ini:"tls_certfile"`        // for TLS
-		TLSKeyFile      string      `ini:"tls_keyfile"`         // for TLS
-		LetsencryptFile string      `ini:"letsencrypt_file"`    // for Let's Encrypt (free SSL)
-		UNIXFileMode    os.FileMode `ini:"unix_filemode"`       // for UNIX listener file mode
+		NetTypes       []string    `ini:"net_types" delim:"|"` // List of network type: http | https | unix_http | unix_https | letsencrypt | unix_letsencrypt
+		Addrs          []string    `ini:"addrs" delim:"|"`     // List of multiple listening addresses
+		TLSCertFile    string      `ini:"tls_certfile"`        // TLS certificate file path
+		TLSKeyFile     string      `ini:"tls_keyfile"`         // TLS key file path
+		LetsencryptDir string      `ini:"letsencrypt_dir"`     // Let's Encrypt TLS certificate cache directory
+		UNIXFileMode   os.FileMode `ini:"unix_filemode"`       // File permissions for UNIX Server (438 equivalent to 0666)
 		// Maximum duration for reading the full request (including body).
 		//
 		// This also limits the maximum duration for idle keep-alive
@@ -50,7 +50,8 @@ type (
 		// Maximum duration for writing the full response (including body).
 		//
 		// By default response write timeout is unlimited.
-		WriteTimeout         time.Duration `ini:"write_timeout"`
+		WriteTimeout time.Duration `ini:"write_timeout"`
+		// Maximum size of memory that can be used when receiving uploaded files.
 		MultipartMaxMemoryMB int64         `ini:"multipart_maxmemory_mb"`
 		multipartMaxMemory   int64         `ini:"-"`
 		Router               RouterConfig  `ini:"router"`
@@ -58,6 +59,7 @@ type (
 		Session              SessionConfig `ini:"session"`
 		APIdoc               APIdocConfig  `ini:"apidoc"`
 	}
+	// RouterConfig is the configuration about router
 	RouterConfig struct {
 		// Enables automatic redirection if the current route can't be matched but a
 		// handler for the path with (without) the trailing slash exists.
@@ -86,6 +88,7 @@ type (
 		// Custom OPTIONS handlers take priority over automatic replies.
 		HandleOPTIONS bool `ini:"handle_options"`
 	}
+	// GzipConfig is the configuration about gzip
 	GzipConfig struct {
 		// if EnableGzip, compress response content.
 		Enable bool `ini:"enable"`
@@ -93,11 +96,13 @@ type (
 		//Default size==20B same as nginx
 		MinLength int `ini:"min_length"`
 		//The compression level used for deflate compression. (0-9).
+		//Non-file response Body's compression level is 0-9, but the files' always 9
 		CompressLevel int `ini:"compress_level"`
 		//List of HTTP methods to compress. If not set, only GET requests are compressed.
 		Methods []string `ini:"methods" delim:"|"`
 		// StaticExtensionsToGzip []string
 	}
+	// CacheConfig is the configuration about cache
 	CacheConfig struct {
 		// Whether to enable caching static files
 		Enable bool `ini:"enable"`
@@ -111,33 +116,38 @@ type (
 		// Expire <= 0 (second) means no expire, but it can be evicted when cache is full.
 		Expire int `ini:"expire"`
 	}
+	// XSRFConfig is the configuration about XSRF filter
 	XSRFConfig struct {
 		Enable bool   `ini:"enable"`
 		Key    string `ini:"key"`
 		Expire int    `ini:"expire"`
 	}
+	// SessionConfig is the configuration about session
 	SessionConfig struct {
-		Enable                bool   `ini:"enable"`
-		Provider              string `ini:"provider"`
-		Name                  string `ini:"name"`
-		GCMaxLifetime         int64  `ini:"gc_max_lifetime"`
-		ProviderConfig        string `ini:"provider_config"`
-		CookieLifetime        int    `ini:"cookie_lifetime"`
-		AutoSetCookie         bool   `ini:"auto_setcookie"`
-		Domain                string `ini:"domain"`
-		EnableSidInHttpHeader bool   `ini:"enable_sid_in_header"` // enable store/get the sessionId into/from http headers
-		NameInHttpHeader      string `ini:"name_in_header"`
-		EnableSidInUrlQuery   bool   `ini:"enable_sid_in_urlquery"` // enable get the sessionId from Url Query params
+		Enable                bool   `ini:"enable"`                 // Whether enabled or not
+		Provider              string `ini:"provider"`               // Data storage
+		Name                  string `ini:"name"`                   // The client stores the name of the cookie
+		GCMaxLifetime         int64  `ini:"gc_max_lifetime"`        // The interval between triggering the GC
+		ProviderConfig        string `ini:"provider_config"`        // According to the different engine settings different configuration information
+		CookieLifetime        int    `ini:"cookie_lifetime"`        // The default value is 0, which is the lifetime of the browser
+		AutoSetCookie         bool   `ini:"auto_setcookie"`         // Automatically set on the session cookie value, the general default true
+		Domain                string `ini:"domain"`                 // The domain name that is allowed to access this cookie
+		EnableSidInHttpHeader bool   `ini:"enable_sid_in_header"`   // Whether to write a session ID to the header
+		NameInHttpHeader      string `ini:"name_in_header"`         // The name of the header when the session ID is written to the header
+		EnableSidInUrlQuery   bool   `ini:"enable_sid_in_urlquery"` // Whether to write the session ID to the URL Query params
 	}
+	// LogConfig is the configuration about log
 	LogConfig struct {
 		ConsoleEnable bool   `ini:"console_enable"`
 		ConsoleLevel  string `ini:"console_level"` // critical | error | warning | notice | info | debug
 		FileEnable    bool   `ini:"file_enable"`
 		FileLevel     string `ini:"file_level"` // critical | error | warning | notice | info | debug
+		AsyncLen      int    `ini:"async_len"`  // the length of asynchronous buffer, 0 means synchronization
 	}
+	// APIdocConfig is the configuration about API doc
 	APIdocConfig struct {
-		Enable     bool     `ini:"enable"`              // Whether to enable API doc
-		Path       string   `ini:"path"`                // API doc url
+		Enable     bool     `ini:"enable"`              // whether to enable API doc
+		Path       string   `ini:"path"`                // API doc url path
 		NoLimit    bool     `ini:"nolimit"`             // if true, access is not restricted
 		RealIP     bool     `ini:"real_ip"`             // if true, means verifying the real IP of the visitor
 		Whitelist  []string `ini:"whitelist" delim:"|"` // `whitelist=192.*|202.122.246.170` means: only IP addresses that are prefixed with `192 'or equal to` 202.122.246.170' are allowed
@@ -145,17 +155,14 @@ type (
 		Email      string   `ini:"email"`               // technician's Email
 		TermsURL   string   `ini:"terms_url"`           // terms of service
 		License    string   `ini:"license"`             // the license used by the API
-		LicenseURL string   `ini:"license_url"`
+		LicenseURL string   `ini:"license_url"`         // the URL of the protocol content page
 	}
 )
 
+// some default config
 const (
 	// RUNMODE_DEV                 = "dev"
 	// RUNMODE_PROD                = "prod"
-	NETTYPE_NORMAL              = "normal"
-	NETTYPE_TLS                 = "tls"
-	NETTYPE_LETSENCRYPT         = "letsencrypt"
-	NETTYPE_UNIX                = "unix"
 	MB                          = 1 << 20 // 1MB
 	defaultMultipartMaxMemory   = 32 * MB // 32 MB
 	defaultMultipartMaxMemoryMB = 32
@@ -188,37 +195,28 @@ var globalConfig = func() GlobalConfig {
 		Log: LogConfig{
 			ConsoleEnable: true,
 			ConsoleLevel:  "debug",
-			FileEnable:    true,
+			FileEnable:    false,
 			FileLevel:     "debug",
 		},
 	}
 	filename := CONFIG_DIR + GLOBAL_CONFIG_FILE
-	os.MkdirAll(filepath.Dir(filename), 0777)
 
-	cfg, err := ini.LooseLoad(filename)
-	if err != nil {
-		panic(err)
-	}
-	err = cfg.MapTo(&background)
+	err := SyncINI(
+		&background,
+		func() error {
+			if !(background.Log.ConsoleEnable || background.Log.FileEnable) {
+				background.Log.ConsoleEnable = true
+				background.warnMsg = "config: log::enable_console and log::enable_file can not be disabled at the same time, so automatically open console log."
+			}
+			return nil
+		},
+		filename,
+	)
+
 	if err != nil {
 		panic(err)
 	}
 
-	{
-		if !(background.Log.ConsoleEnable || background.Log.FileEnable) {
-			background.Log.ConsoleEnable = true
-			background.warnMsg = "config: log::enable_console and log::enable_file can not be disabled at the same time, so automatically open console log."
-		}
-	}
-
-	err = cfg.ReflectFrom(&background)
-	if err != nil {
-		panic(err)
-	}
-	err = cfg.SaveTo(filename)
-	if err != nil {
-		panic(err)
-	}
 	return background
 }()
 
@@ -229,7 +227,7 @@ func newConfig(filename string) Config {
 	atomic.AddUint32(&appCount, 1)
 	var background = Config{
 		// RunMode:              RUNMODE_DEV,
-		NetTypes:             []string{"normal"},
+		NetTypes:             []string{NETTYPE_HTTP},
 		Addrs:                []string{addr},
 		UNIXFileMode:         0666,
 		MultipartMaxMemoryMB: defaultMultipartMaxMemoryMB,
@@ -241,25 +239,25 @@ func newConfig(filename string) Config {
 		},
 		XSRF: XSRFConfig{
 			Enable: false,
-			Key:    "thinkgoxsrf",
+			Key:    "faygoxsrf",
 			Expire: 3600,
 		},
 		Session: SessionConfig{
 			Enable:                false,
 			Provider:              "memory",
-			Name:                  "thinkgosessionID",
+			Name:                  "faygosessionID",
 			GCMaxLifetime:         3600,
 			ProviderConfig:        "",
 			CookieLifetime:        0, //set cookie default is the browser life
 			AutoSetCookie:         true,
 			Domain:                "",
 			EnableSidInHttpHeader: false, //	enable store/get the sessionId into/from http headers
-			NameInHttpHeader:      "Thinkgosessionid",
+			NameInHttpHeader:      "Faygosessionid",
 			EnableSidInUrlQuery:   false, //	enable get the sessionId from Url Query params
 		},
 		APIdoc: APIdocConfig{
 			Enable:  true,
-			Path:    "/apidoc",
+			Path:    "/apidoc/",
 			NoLimit: false,
 			RealIP:  false,
 			Whitelist: []string{
@@ -269,63 +267,41 @@ func newConfig(filename string) Config {
 		},
 	}
 
-	os.MkdirAll(filepath.Dir(filename), 0777)
-
-	cfg, err := ini.LooseLoad(filename)
-	if err != nil {
-		panic(err)
-	}
-	err = cfg.MapTo(&background)
-	if err != nil {
-		panic(err)
-	}
-
-	{
-		// switch background.RunMode {
-		// case RUNMODE_DEV, RUNMODE_PROD:
-		// default:
-		// 	panic("Please set a valid config item run_mode, refer to the following:\ndev | prod")
-		// }
-		if len(background.NetTypes) != len(background.Addrs) {
-			panic("The number of configuration items `net_types` and `addrs` must be equal")
-		}
-		if len(background.NetTypes) == 0 {
-			panic("The number of configuration items `net_types` and `addrs` must be greater than zero")
-		}
-		for _, t := range background.NetTypes {
-			switch t {
-			case NETTYPE_NORMAL, NETTYPE_TLS, NETTYPE_LETSENCRYPT, NETTYPE_UNIX:
-			default:
-				panic("Please set a valid config item `net_types`, refer to the following:\nnormal | tls | letsencrypt | unix")
+	err := SyncINI(
+		&background,
+		func() error {
+			// switch background.RunMode {
+			// case RUNMODE_DEV, RUNMODE_PROD:
+			// default:
+			// 	panic("Please set a valid config item run_mode, refer to the following:\ndev | prod")
+			// }
+			if len(background.NetTypes) != len(background.Addrs) {
+				panic("The number of configuration items `net_types` and `addrs` must be equal")
 			}
-		}
-		background.multipartMaxMemory = background.MultipartMaxMemoryMB * MB
-		background.APIdoc.Comb()
+			if len(background.NetTypes) == 0 {
+				panic("The number of configuration items `net_types` and `addrs` must be greater than zero")
+			}
+			for _, t := range background.NetTypes {
+				switch t {
+				case NETTYPE_HTTP, NETTYPE_UNIX_HTTP, NETTYPE_HTTPS, NETTYPE_UNIX_HTTPS, NETTYPE_LETSENCRYPT, NETTYPE_UNIX_LETSENCRYPT:
+				default:
+					panic("Please set a valid config item `net_types`, refer to the following:" + __netTypes__ + "\n")
+				}
+			}
+			background.multipartMaxMemory = background.MultipartMaxMemoryMB * MB
+			background.APIdoc.Comb()
+			return nil
+		},
+		filename,
+	)
+	if err != nil {
+		panic(err)
 	}
 
-	err = cfg.ReflectFrom(&background)
-	if err != nil {
-		panic(err)
-	}
-	err = cfg.SaveTo(filename)
-	if err != nil {
-		panic(err)
-	}
 	return background
 }
 
-func syncConfigToFile(filename string, config *Config) error {
-	cfg, err := ini.LooseLoad(filename)
-	if err != nil {
-		return err
-	}
-	err = cfg.ReflectFrom(&config)
-	if err != nil {
-		return err
-	}
-	return cfg.SaveTo(filename)
-}
-
+// Comb combs APIdoc config
 func (conf *APIdocConfig) Comb() {
 	ipPrefixMap := map[string]bool{}
 	for _, ipPrefix := range conf.Whitelist {
@@ -338,4 +314,5 @@ func (conf *APIdocConfig) Comb() {
 		conf.Whitelist = append(conf.Whitelist, ipPrefix)
 	}
 	sort.Strings(conf.Whitelist)
+	conf.Path = "/" + strings.Trim(conf.Path, "/") + "/"
 }

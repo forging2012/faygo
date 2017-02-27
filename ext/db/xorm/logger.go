@@ -3,10 +3,11 @@ package xorm
 import (
 	"github.com/go-xorm/core"
 
-	"github.com/henrylee2cn/thinkgo"
-	"github.com/henrylee2cn/thinkgo/logging"
+	"github.com/henrylee2cn/faygo"
+	"github.com/henrylee2cn/faygo/logging"
 )
 
+// ILogger logger
 type ILogger struct {
 	logging *logging.Logger
 	level   core.LogLevel
@@ -15,47 +16,58 @@ type ILogger struct {
 
 var iLogger = func() *ILogger {
 	log := &ILogger{
-		logging: thinkgo.NewLog(),
+		logging: faygo.NewLog(),
 	}
 	log.logging.ExtraCalldepth++
 	return log
 }()
 
+// Debug DEBUG level log
 func (i *ILogger) Debug(v ...interface{}) {
 	i.logging.Debug(v...)
 }
 
+// Debug DEBUG level log with format
 func (i *ILogger) Debugf(format string, v ...interface{}) {
 	i.logging.Debugf(format, v...)
 }
 
+// Debug ERROR level log
 func (i *ILogger) Error(v ...interface{}) {
 	i.logging.Error(v...)
 }
 
+// Debug ERROR level log with format
 func (i *ILogger) Errorf(format string, v ...interface{}) {
 	i.logging.Errorf(format, v...)
 }
 
+// Debug INFO level log
 func (i *ILogger) Info(v ...interface{}) {
 	i.logging.Info(v...)
 }
 
+// Debug INFO level log with format
 func (i *ILogger) Infof(format string, v ...interface{}) {
 	i.logging.Infof(format, v...)
 }
 
+// Debug WARN level log
 func (i *ILogger) Warn(v ...interface{}) {
 	i.logging.Warn(v...)
 }
+
+// Debug WARN level log with format
 func (i *ILogger) Warnf(format string, v ...interface{}) {
 	i.logging.Warnf(format, v...)
 }
 
+// Level returns log level
 func (i *ILogger) Level() core.LogLevel {
 	return core.LOG_UNKNOWN
 }
 
+// SetLevel sets log level
 func (i *ILogger) SetLevel(l core.LogLevel) {}
 
 func (i *ILogger) ShowSQL(show ...bool) {
@@ -66,6 +78,7 @@ func (i *ILogger) ShowSQL(show ...bool) {
 	i.showSQL = show[0]
 }
 
+// IsShowSQL returns if it wills show SQL
 func (i *ILogger) IsShowSQL() bool {
 	return i.showSQL
 }

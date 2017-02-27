@@ -29,7 +29,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/henrylee2cn/thinkgo/utils"
+	"github.com/henrylee2cn/faygo/utils"
 )
 
 func init() {
@@ -73,7 +73,7 @@ func DecodeGob(encoded []byte) (map[interface{}]interface{}, error) {
 func generateRandomKey(strength int) []byte {
 	k := make([]byte, strength)
 	if n, err := io.ReadFull(rand.Reader, k); n != strength || err != nil {
-		return utils.RandomCreateBytes(strength)
+		return utils.RandomBytes(strength)
 	}
 	return k
 }

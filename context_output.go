@@ -12,214 +12,39 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package thinkgo
+package faygo
 
 import (
-	"bufio"
 	"bytes"
 	"crypto/hmac"
 	"crypto/sha1"
 	"encoding/base64"
 	"encoding/json"
 	"encoding/xml"
-	"errors"
 	"fmt"
 	"html/template"
-	"io"
-	"mime"
-	"net"
-	"net/http"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 	"unsafe"
 
-	"github.com/henrylee2cn/thinkgo/acceptencoder"
+	"github.com/henrylee2cn/faygo/acceptencoder"
 )
 
-// Response wraps an http.ResponseWriter and implements its interface to be used
-// by an HTTP handler to construct an HTTP response.
-// See [http.ResponseWriter](https://golang.org/pkg/net/http/#ResponseWriter)
-type Response struct {
-	context   *Context
-	writer    http.ResponseWriter
-	status    int
-	size      int64
-	committed bool
+// Size returns the current size, in bytes, of the response.
+func (ctx *Context) Size() int64 {
+	return ctx.W.Size()
 }
 
-var _ http.ResponseWriter = new(Response)
-
-// newResponse creates a new instance of Response.
-func newResponse(ctx *Context, w http.ResponseWriter) *Response {
-	return &Response{
-		context: ctx,
-		writer:  w,
-	}
-}
-
-func (resp *Response) reset(w http.ResponseWriter) {
-	resp.writer = w
-	resp.status = 0
-	resp.size = 0
-	resp.committed = false
-}
-
-// Header returns the header map that will be sent by
-// WriteHeader. Changing the header after a call to
-// WriteHeader (or Write) has no effect unless the modified
-// headers were declared as trailers by setting the
-// "Trailer" header before the call to WriteHeader (see example).
-// To suppress implicit response headers, set their value to nil.
-func (resp *Response) Header() http.Header {
-	return resp.writer.Header()
-}
-
-// WriteHeader sends an HTTP response header with status code.
-// If WriteHeader is not called explicitly, the first call to Write
-// will trigger an implicit WriteHeader(http.StatusOK).
-// Thus explicit calls to WriteHeader are mainly used to
-// send error codes.
-func (resp *Response) WriteHeader(status int) {
-	if resp.committed {
-		resp.context.Log().Warning("multiple response.WriteHeader calls")
-		return
-	}
-	resp.status = status
-	resp.context.beforeWriteHeader()
-	resp.writer.WriteHeader(status)
-	resp.committed = true
-}
-
-// Write writes the data to the connection as part of an HTTP reply.
-// If WriteHeader has not yet been called, Write calls WriteHeader(http.StatusOK)
-// before writing the data.  If the Header does not contain a
-// Content-Type line, Write adds a Content-Type set to the result of passing
-// the initial 512 bytes of written data to DetectContentType.
-func (resp *Response) Write(b []byte) (int, error) {
-	if !resp.committed {
-		resp.WriteHeader(200)
-	}
-	n, err := resp.writer.Write(b)
-	resp.size += int64(n)
-	return n, err
-}
-
-// AddCookie adds a Set-Cookie header.
-// The provided cookie must have a valid Name. Invalid cookies may be
-// silently dropped.
-func (r *Response) AddCookie(cookie *http.Cookie) {
-	r.Header().Add(HeaderSetCookie, cookie.String())
-}
-
-// SetCookie sets a Set-Cookie header.
-func (r *Response) SetCookie(cookie *http.Cookie) {
-	r.Header().Set(HeaderSetCookie, cookie.String())
-}
-
-// DelCookie sets Set-Cookie header.
-func (r *Response) DelCookie() {
-	r.Header().Del(HeaderSetCookie)
-}
-
-// ReadFrom is here to optimize copying from an *os.File regular file
-// to a *net.TCPConn with sendfile.
-func (resp *Response) ReadFrom(src io.Reader) (int64, error) {
-	if rf, ok := resp.writer.(io.ReaderFrom); ok {
-		n, err := rf.ReadFrom(src)
-		resp.size += int64(n)
-		return n, err
-	}
-	var buf = make([]byte, 32*1024)
-	var n int64
-	var err error
-	for {
-		nr, er := src.Read(buf)
-		if nr > 0 {
-			nw, ew := resp.writer.Write(buf[0:nr])
-			if nw > 0 {
-				n += int64(nw)
-			}
-			if ew != nil {
-				err = ew
-				break
-			}
-			if nr != nw {
-				err = io.ErrShortWrite
-				break
-			}
-		}
-		if er == io.EOF {
-			break
-		}
-		if er != nil {
-			err = er
-			break
-		}
-	}
-	resp.size += n
-	return n, err
-}
-
-// Flush implements the http.Flusher interface to allow an HTTP handler to flush
-// buffered data to the client.
-func (resp *Response) Flush() {
-	if f, ok := resp.writer.(http.Flusher); ok {
-		f.Flush()
-	}
-}
-
-// Hijack implements the http.Hijacker interface to allow an HTTP handler to
-// take over the connection.
-func (resp *Response) Hijack() (net.Conn, *bufio.ReadWriter, error) {
-	if hj, ok := resp.writer.(http.Hijacker); ok {
-		return hj.Hijack()
-	}
-	return nil, nil, errors.New("webserver doesn't support Hijack")
-}
-
-// CloseNotify implements the http.CloseNotifier interface to allow detecting
-// when the underlying connection has gone away.
-// This mechanism can be used to cancel long operations on the server if the
-// client has disconnected before the response is ready.
-func (resp *Response) CloseNotify() <-chan bool {
-	if cn, ok := resp.writer.(http.CloseNotifier); ok {
-		return cn.CloseNotify()
-	}
-	return nil
+// Committed returns whether the response has been submitted or not.
+func (ctx *Context) Committed() bool {
+	return ctx.W.committed
 }
 
 // Status returns the HTTP status code of the response.
-func (resp *Response) Status() int {
-	return resp.status
-}
-
-// Size returns the current size, in bytes, of the response.
-func (resp *Response) Size() int64 {
-	return resp.size
-}
-
-// Committed asserts whether or not the response has been committed to.
-func (resp *Response) Committed() bool {
-	return resp.committed
-}
-
-// SetHeader sets response header item string via given key.
-func (ctx *Context) SetHeader(key, val string) {
-	ctx.W.Header().Set(key, val)
-}
-
-// SetContentType sets the content type from ext string.
-// MIME type is given in mime package.
-func (ctx *Context) SetContentType(ext string) {
-	if !strings.HasPrefix(ext, ".") {
-		ext = "." + ext
-	}
-	ctype := mime.TypeByExtension(ext)
-	if ctype != "" {
-		ctx.W.Header().Set(HeaderContentType, ctype)
-	}
+func (ctx *Context) Status() int {
+	return ctx.W.status
 }
 
 // IsCachable returns boolean of this request is cached.
@@ -274,6 +99,11 @@ func (ctx *Context) IsClientError() bool {
 // HTTP 5xx means server internal error.
 func (ctx *Context) IsServerError() bool {
 	return ctx.W.status >= 500 && ctx.W.status < 600
+}
+
+// SetHeader sets response header item string via given key.
+func (ctx *Context) SetHeader(key, val string) {
+	ctx.W.Header().Set(key, val)
 }
 
 // SetCookie sets cookie value via given key.
@@ -381,30 +211,26 @@ func (ctx *Context) NoContent(status int) {
 
 // Send error message and stop handler chain.
 func (ctx *Context) Error(status int, errStr string) {
-	Global.errorFunc(ctx, errStr, status)
+	global.errorFunc(ctx, errStr, status)
 	ctx.Stop()
 }
 
 // Bytes writes the data bytes to the connection as part of an HTTP reply.
-func (ctx *Context) Bytes(status int, content []byte) error {
+func (ctx *Context) Bytes(status int, contentType string, content []byte) error {
 	if ctx.W.committed {
-		return errors.New("multiple response.WriteHeader calls")
+		ctx.W.multiCommitted()
+		return nil
 	}
-	if ctx.W.Header().Get(HeaderContentEncoding) == "" {
-		if ctx.enableGzip {
-			encoding := acceptencoder.ParseEncoding(ctx.R)
-			buf := &bytes.Buffer{}
-			if b, n, _ := acceptencoder.WriteBody(encoding, buf, content); b {
-				ctx.W.Header().Set(HeaderContentEncoding, n)
-				ctx.W.WriteHeader(status)
-				_, err := io.Copy(ctx.W, buf)
-				return err
-			}
-		}
-		if ctx.W.Header().Get(HeaderContentLength) == "" {
-			ctx.W.Header().Set(HeaderContentLength, strconv.Itoa(len(content)))
+	ctx.W.Header().Set(HeaderContentType, contentType)
+	if ctx.enableGzip && len(ctx.W.Header()[HeaderContentEncoding]) == 0 {
+		buf := &bytes.Buffer{}
+		ok, encoding, _ := acceptencoder.WriteBody(acceptencoder.ParseEncoding(ctx.R), buf, content)
+		if ok {
+			ctx.W.Header().Set(HeaderContentEncoding, encoding)
+			content = buf.Bytes()
 		}
 	}
+	ctx.W.Header().Set(HeaderContentLength, strconv.Itoa(len(content)))
 	ctx.W.WriteHeader(status)
 	_, err := ctx.W.Write(content)
 	return err
@@ -412,19 +238,17 @@ func (ctx *Context) Bytes(status int, content []byte) error {
 
 // String writes a string to the client, something like fmt.Fprintf
 func (ctx *Context) String(status int, format string, s ...interface{}) error {
-	ctx.W.Header().Set(HeaderContentType, MIMETextPlainCharsetUTF8)
 	if len(s) == 0 {
-		return ctx.Bytes(status, []byte(format))
+		return ctx.Bytes(status, MIMETextPlainCharsetUTF8, []byte(format))
 	}
-	return ctx.Bytes(status, []byte(fmt.Sprintf(format, s...)))
+	return ctx.Bytes(status, MIMETextPlainCharsetUTF8, []byte(fmt.Sprintf(format, s...)))
 }
 
 // HTML sends an HTTP response with status code.
 func (ctx *Context) HTML(status int, html string) error {
 	x := (*[2]uintptr)(unsafe.Pointer(&html))
 	h := [3]uintptr{x[0], x[1], x[1]}
-	ctx.W.Header().Set(HeaderContentType, MIMETextHTMLCharsetUTF8)
-	return ctx.Bytes(status, *(*[]byte)(unsafe.Pointer(&h)))
+	return ctx.Bytes(status, MIMETextHTMLCharsetUTF8, *(*[]byte)(unsafe.Pointer(&h)))
 }
 
 // JSON sends a JSON response with status code.
@@ -446,8 +270,7 @@ func (ctx *Context) JSON(status int, data interface{}, isIndent ...bool) error {
 
 // JSONBlob sends a JSON blob response with status code.
 func (ctx *Context) JSONBlob(status int, b []byte) error {
-	ctx.W.Header().Set(HeaderContentType, MIMEApplicationJSONCharsetUTF8)
-	return ctx.Bytes(status, b)
+	return ctx.Bytes(status, MIMEApplicationJSONCharsetUTF8, b)
 }
 
 // JSONP sends a JSONP response with status code. It uses `callback` to construct
@@ -465,13 +288,33 @@ func (ctx *Context) JSONP(status int, callback string, data interface{}, isInden
 	if err != nil {
 		return err
 	}
-	ctx.W.Header().Set(HeaderContentType, MIMEApplicationJavaScriptCharsetUTF8)
 	callback = template.JSEscapeString(callback)
 	callbackContent := bytes.NewBufferString(" if(window." + callback + ")" + callback)
 	callbackContent.WriteString("(")
 	callbackContent.Write(b)
 	callbackContent.WriteString(");\r\n")
-	return ctx.Bytes(status, callbackContent.Bytes())
+	return ctx.Bytes(status, MIMEApplicationJavaScriptCharsetUTF8, callbackContent.Bytes())
+}
+
+// JSONMsg sends a JSON with JSONMsg format.
+func (ctx *Context) JSONMsg(status int, msgcode int, info interface{}, isIndent ...bool) error {
+	var (
+		b    []byte
+		err  error
+		data = JSONMsg{
+			Code: msgcode,
+			Info: info,
+		}
+	)
+	if len(isIndent) > 0 && isIndent[0] {
+		b, err = json.MarshalIndent(data, "", "  ")
+	} else {
+		b, err = json.Marshal(data)
+	}
+	if err != nil {
+		return err
+	}
+	return ctx.JSONBlob(status, b)
 }
 
 // XML sends an XML response with status code.
@@ -493,10 +336,9 @@ func (ctx *Context) XML(status int, data interface{}, isIndent ...bool) error {
 
 // XMLBlob sends a XML blob response with status code.
 func (ctx *Context) XMLBlob(status int, b []byte) error {
-	ctx.W.Header().Set(HeaderContentType, MIMEApplicationXMLCharsetUTF8)
 	content := bytes.NewBufferString(xml.Header)
 	content.Write(b)
-	return ctx.Bytes(status, content.Bytes())
+	return ctx.Bytes(status, MIMEApplicationXMLCharsetUTF8, content.Bytes())
 }
 
 // JSONOrXML serve Xml OR Json, depending on the value of the Accept header
@@ -521,15 +363,14 @@ func (ctx *Context) File(file string, filename ...string) {
 	ctx.W.Header().Set(HeaderExpires, "0")
 	ctx.W.Header().Set(HeaderCacheControl, "must-revalidate")
 	ctx.W.Header().Set(HeaderPragma, "public")
-	Global.fsManager.ServeFile(ctx, file)
+	global.fsManager.ServeFile(ctx, file)
 }
 
 // Render renders a template with data and sends a text/html response with status code.
 func (ctx *Context) Render(status int, name string, data Map) error {
-	b, err := Global.pongo2Render.Render(name, (data))
+	b, err := global.render.Render(name, data)
 	if err != nil {
 		return err
 	}
-	ctx.W.Header().Set(HeaderContentType, MIMETextHTMLCharsetUTF8)
-	return ctx.Bytes(status, b)
+	return ctx.Bytes(status, MIMETextHTMLCharsetUTF8, b)
 }

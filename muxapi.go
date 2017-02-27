@@ -12,10 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package thinkgo
+package faygo
 
 import (
-	"net/http"
 	"os"
 	"path"
 	"reflect"
@@ -37,10 +36,11 @@ type (
 		children   []*MuxAPI
 		frame      *Framework
 	}
-	// method set for request
+	// Methodset is the methods string of request
 	Methodset string
 )
 
+// RESTfulMethodList is the list of all RESTful methods
 var RESTfulMethodList = []string{
 	"CONNECT",
 	"DELETE",
@@ -67,22 +67,18 @@ func newMuxAPI(frame *Framework, name string, methodset Methodset, pattern strin
 	return muxapi
 }
 
-/*
- * Parse out the list of methods.
- *
- * List of common methods:
- * CONNECT
- * DELETE
- * GET
- * HEAD
- * OPTIONS
- * PATCH
- * POST
- * PUT
- * TRACE
- *
- * "*"——CONNECT/DELETE/GET/HEAD/OPTIONS/PATCH/POST/PUT/TRACE
- */
+// Methods parses out the list of methods.
+// List of common methods:
+//  CONNECT
+//  DELETE
+//  GET
+//  HEAD
+//  OPTIONS
+//  PATCH
+//  POST
+//  PUT
+//  TRACE
+//  "*"——CONNECT/DELETE/GET/HEAD/OPTIONS/PATCH/POST/PUT/TRACE
 func (m *Methodset) Methods() []string {
 	s := strings.ToUpper(string(*m))
 	if strings.Contains(s, "*") {
@@ -99,6 +95,17 @@ func (m *Methodset) Methods() []string {
 	return methods
 }
 
+// HasMethod checks whether the specified method exists or not.
+func (mux *MuxAPI) HasMethod(method string) bool {
+	method = strings.ToUpper(method)
+	for _, m := range mux.methods {
+		if method == m {
+			return true
+		}
+	}
+	return false
+}
+
 // Group adds a subordinate subgroup node to the current muxAPI grouping node.
 // notes: handler cannot be nil.
 func (mux *MuxAPI) Group(pattern string, handlers ...Handler) *MuxAPI {
@@ -111,6 +118,7 @@ func (mux *MuxAPI) NamedGroup(name string, pattern string, handlers ...Handler) 
 	return mux.NamedAPI(name, "", pattern, handlers...)
 }
 
+// IsGroup returns whether the muxapi node is group or not.
 func (mux *MuxAPI) IsGroup() bool {
 	return len(mux.methods) == 0
 }
@@ -130,6 +138,7 @@ func (mux *MuxAPI) NamedAPI(name string, methodset Methodset, pattern string, ha
 			mux.frame.Log().Panicf("%s\n", errStr)
 		}
 	}
+	pattern = path.Join("/", pattern)
 	var child = newMuxAPI(mux.frame, name, methodset, pattern, handlers...)
 	mux.children = append(mux.children, child)
 	child.parent = mux
@@ -215,8 +224,8 @@ func (mux *MuxAPI) NamedDELETE(name string, pattern string, handlers ...Handler)
 // of the Router's NotFound handler.
 // To use the operating system's file system implementation,
 // use http.Dir:
-//     frame.StaticFS("/src/*filepath", http.Dir("/var/www"))
-func (mux *MuxAPI) NamedStaticFS(name, pattern string, fs http.FileSystem) *MuxAPI {
+//     frame.StaticFS("/src/*filepath", Dir("/var/www", true, true)
+func (mux *MuxAPI) NamedStaticFS(name, pattern string, fs FileSystem) *MuxAPI {
 	if fs == nil {
 		errStr := "For file server, fs (http.FileSystem) cannot be nil"
 		mux.frame.Log().Panicf("%s\n", errStr)
@@ -229,29 +238,29 @@ func (mux *MuxAPI) NamedStaticFS(name, pattern string, fs http.FileSystem) *MuxA
 			ctx.R.URL.Path = ctx.pathParams.ByName("filepath")
 			return fileServer.Serve(ctx)
 		})
-	}(Global.fsManager.FileServer(fs))
+	}(global.fsManager.FileServer(fs))
 	return mux.NamedAPI(name, "GET", pattern, handler)
 }
 
 // StaticFS is similar to NamedStaticFS, but no name.
-func (mux *MuxAPI) StaticFS(pattern string, fs http.FileSystem) *MuxAPI {
+func (mux *MuxAPI) StaticFS(pattern string, fs FileSystem) *MuxAPI {
 	return mux.NamedStaticFS("fileserver", pattern, fs)
 }
 
 // NamedStatic is similar to NamedStaticFS, but the second parameter is the local file path.
-func (mux *MuxAPI) NamedStatic(name, pattern string, root string) *MuxAPI {
+func (mux *MuxAPI) NamedStatic(name, pattern string, root string, nocompressAndNocache ...bool) *MuxAPI {
 	os.MkdirAll(root, 0777)
-	return mux.NamedStaticFS(name, pattern, http.Dir(root))
+	return mux.NamedStaticFS(name, pattern, DirFS(root, nocompressAndNocache...))
 }
 
 // Static is similar to NamedStatic, but no name.
-func (mux *MuxAPI) Static(pattern string, root string) *MuxAPI {
-	return mux.NamedStatic(root, pattern, root)
+func (mux *MuxAPI) Static(pattern string, root string, nocompressAndNocache ...bool) *MuxAPI {
+	return mux.NamedStatic(root, pattern, root, nocompressAndNocache...)
 }
 
-// Insert the middlewares at the left end of the node's handler chain.
+// Use inserts the middlewares at the left end of the node's handler chain.
 // notes: handler cannot be nil.
-func (mux *MuxAPI) Use(handlers ...HandlerWithoutPath) *MuxAPI {
+func (mux *MuxAPI) Use(handlers ...Handler) *MuxAPI {
 	_handlers := make([]Handler, len(handlers))
 	for i, h := range handlers {
 		if h == nil {
@@ -275,28 +284,46 @@ func (mux *MuxAPI) comb() {
 	mux.paramInfos = mux.paramInfos[:0]
 	mux.notes = mux.notes[:0]
 	for i, handler := range mux.handlers {
-		apiHandler := ToAPIHandler(handler)
-		if apiHandler == nil {
-			continue
-		}
-		h, err := newHandlerStruct(apiHandler, Global.paramMapping)
+		h, err := ToAPIHandler(handler)
 		if err != nil {
-			errStr := "[Thinkgo-newHandlerStruct] " + err.Error()
+			if err == ErrNotStructPtr || err == ErrNoParamHandler {
+				// Get the information for apidoc
+				if doc, ok := handler.(APIDoc); ok {
+					docinfo := doc.Doc()
+					if docinfo.Note != "" || docinfo.Return != nil {
+						mux.notes = append(mux.notes, Notes{Note: docinfo.Note, Return: docinfo.Return})
+					}
+					for _, param := range docinfo.Params {
+						// The path parameter must be a required parameter.
+						if param.In == "path" {
+							param.Required = true
+						}
+						mux.paramInfos = append(mux.paramInfos, param)
+					}
+				}
+				continue
+			}
+			errStr := "[Faygo-ToAPIHandler] " + err.Error()
 			mux.frame.Log().Panicf("%s\n", errStr)
 		}
-		if h.paramsAPI.Number() == 0 {
-			continue
-		}
+
 		if h.paramsAPI.MaxMemory() == defaultMultipartMaxMemory {
 			h.paramsAPI.SetMaxMemory(mux.frame.config.multipartMaxMemory)
 		}
-		mux.handlers[i] = h
-
 		// Get the information for apidoc
-		mux.paramInfos = append(mux.paramInfos, h.paramInfos()...)
-		if r := h.getNotes(); r != nil {
-			mux.notes = append(mux.notes, *r)
+		docinfo := h.Doc()
+		if docinfo.Note != "" || docinfo.Return != nil {
+			mux.notes = append(mux.notes, Notes{Note: docinfo.Note, Return: docinfo.Return})
 		}
+		for _, param := range docinfo.Params {
+			// The path parameter must be a required parameter.
+			if param.In == "path" {
+				param.Required = true
+			}
+			mux.paramInfos = append(mux.paramInfos, param)
+		}
+
+		mux.handlers[i] = h
 	}
 
 	// check path params defined, and panic if there is any error.
@@ -326,16 +353,26 @@ func (mux *MuxAPI) comb() {
 
 // check path params defined, and panic if there is any error.
 func (mux *MuxAPI) checkPathParams() {
+	var numPathParams uint8
 	for _, paramInfo := range mux.paramInfos {
 		if paramInfo.In != "path" {
 			continue
 		}
-		count := strings.Count(mux.pattern, "/:"+paramInfo.Name) + strings.Count(mux.pattern, "/*"+paramInfo.Name)
-		if count != 1 {
-			errStr := "[Thinkgo-checkPathParams] the router pattern does not match the path param:\nname: " +
-				paramInfo.Name + "\ndesc:" + paramInfo.Desc
-			mux.frame.Log().Panicf("%s\n", errStr)
+		if !strings.Contains(mux.pattern, "/:"+paramInfo.Name) && !strings.Contains(mux.pattern, "/*"+paramInfo.Name) {
+			mux.frame.Log().Panicf(
+				"[Faygo-checkPathParams] the router pattern `%s` does not match the path param:\n%#v",
+				mux.pattern,
+				paramInfo,
+			)
 		}
+		numPathParams++
+	}
+	if countPathParams(mux.pattern) < numPathParams {
+		mux.frame.Log().Panicf(
+			"[Faygo-checkPathParams] the router pattern `%s` does not match the path params:\n%#v",
+			mux.pattern,
+			mux.paramInfos,
+		)
 	}
 }
 
@@ -347,17 +384,17 @@ func (mux *MuxAPI) checkBodyParamConflicts() {
 		switch paramInfo.In {
 		case "formData":
 			if hasBody {
-				errStr := "[Thinkgo-checkBodyParamConflicts] handler struct tags of `in(formData)` and `in(body)` can not exist at the same time:\nURL path: " + mux.path
+				errStr := "[Faygo-checkBodyParamConflicts] handler struct tags of `in(formData)` and `in(body)` can not exist at the same time:\nURL path: " + mux.path
 				mux.frame.Log().Panicf("%s\n", errStr)
 			}
 			hasFormData = true
 		case "body":
 			if hasFormData {
-				errStr := "[Thinkgo-checkBodyParamConflicts] handler struct tags of `in(formData)` and `in(body)` can not exist at the same time:\nURL path: " + mux.path
+				errStr := "[Faygo-checkBodyParamConflicts] handler struct tags of `in(formData)` and `in(body)` can not exist at the same time:\nURL path: " + mux.path
 				mux.frame.Log().Panicf("%s\n", errStr)
 			}
 			if hasBody {
-				errStr := "[Thinkgo-checkBodyParamConflicts] there should not be more than one handler struct tag `in(body)`:\nURL path: " + mux.path
+				errStr := "[Faygo-checkBodyParamConflicts] there should not be more than one handler struct tag `in(body)`:\nURL path: " + mux.path
 				mux.frame.Log().Panicf("%s\n", errStr)
 			}
 			hasBody = true
@@ -365,44 +402,67 @@ func (mux *MuxAPI) checkBodyParamConflicts() {
 	}
 }
 
+// Methods returns the methods of muxAPI node.
 func (mux *MuxAPI) Methods() []string {
 	return mux.methods
 }
 
+// Path returns the path of muxAPI node.
 func (mux *MuxAPI) Path() string {
 	return mux.path
 }
 
+// Name returns the name of muxAPI node.
 func (mux *MuxAPI) Name() string {
 	return mux.name
 }
 
+// ParamInfos returns the paramInfos of muxAPI node.
 func (mux *MuxAPI) ParamInfos() []ParamInfo {
 	return mux.paramInfos
 }
 
+// Notes returns the notes of muxAPI node.
 func (mux *MuxAPI) Notes() []Notes {
 	return mux.notes
 }
 
+// Parent returns the parent of muxAPI node.
 func (mux *MuxAPI) Parent() *MuxAPI {
 	return mux.parent
 }
 
+// Children returns the children of muxAPI node.
 func (mux *MuxAPI) Children() []*MuxAPI {
 	return mux.children
 }
 
-// Get an ordered list of all subordinate nodes.
+// Progeny returns an ordered list of all subordinate nodes.
 func (mux *MuxAPI) Progeny() []*MuxAPI {
 	nodes := []*MuxAPI{}
 	for _, child := range mux.children {
-		nodes = append(nodes, child.Progeny()...)
+		child.family(&nodes)
 	}
 	return nodes
 }
 
-// Get an ordered list of subordinate nodes used to register router.
+// Family returns an ordered list of tree nodes.
+func (mux *MuxAPI) Family() []*MuxAPI {
+	nodes := []*MuxAPI{mux}
+	for _, child := range mux.children {
+		child.family(&nodes)
+	}
+	return nodes
+}
+
+func (mux *MuxAPI) family(nodes *[]*MuxAPI) {
+	*nodes = append(*nodes, mux)
+	for _, child := range mux.children {
+		child.family(nodes)
+	}
+}
+
+// HandlerProgeny returns an ordered list of subordinate nodes used to register router.
 func (mux *MuxAPI) HandlerProgeny() []*MuxAPI {
 	if !mux.IsGroup() {
 		return []*MuxAPI{mux}
@@ -414,16 +474,20 @@ func (mux *MuxAPI) HandlerProgeny() []*MuxAPI {
 	return nodes
 }
 
+// MuxAPIs is the array of muxAPIs for sorting
 type MuxAPIs []*MuxAPI
 
+// Len returns the length of muxAPIs
 func (ends MuxAPIs) Len() int {
 	return len(ends)
 }
 
+// Less returns the smaller muxAPI.
 func (ends MuxAPIs) Less(i, j int) bool {
 	return ends[i].path <= ends[j].path
 }
 
+// Swap swaps the two muxAPIs
 func (ends MuxAPIs) Swap(i, j int) {
 	ends[i], ends[j] = ends[j], ends[i]
 }

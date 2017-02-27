@@ -1,82 +1,130 @@
-# Thinkgo    [![GoDoc](https://godoc.org/github.com/tsuna/gohbase?status.png)](https://godoc.org/github.com/henrylee2cn/thinkgo)
+# Faygo    [![GoDoc](https://godoc.org/github.com/tsuna/gohbase?status.png)](https://godoc.org/github.com/henrylee2cn/faygo)    ![Faygo goreportcard](https://goreportcard.com/badge/github.com/henrylee2cn/faygo)
 
-![Lessgo Favicon](https://github.com/henrylee2cn/thinkgo/raw/master/doc/thinkgo_96x96.png)
+![Faygo Favicon](https://github.com/henrylee2cn/faygo/raw/master/doc/faygo_96x96.png)
 
-# 概述
-Thinkgo以全新的架构实现，它面向Handler接口开发，支持智能参数映射与校验、支持自动化API文档的Go语言web框架。
+Faygo uses the new architecture to make itself the most suitable Go Web framework for developping API. Just define a struct Handler, Faygo will automatically bind, verify the request parameters and generate the online API documentation. [Go to \<User Manual\>](https://github.com/henrylee2cn/faydoc)
 
-官方QQ群：Go-Web 编程 42730308    [![Go-Web 编程群](http://pub.idqqimg.com/wpa/images/group.png)](http://jq.qq.com/?_wv=1027&k=fzi4p1)
+[简体中文](https://github.com/henrylee2cn/faygo/blob/master/README_ZH.md)
 
-![thinkgo server](https://github.com/henrylee2cn/thinkgo/raw/master/doc/server.png)
+![faygo index](https://github.com/henrylee2cn/faygo/raw/master/doc/index.png)
 
-![thinkgo apidoc](https://github.com/henrylee2cn/thinkgo/raw/master/doc/apidoc.png)
+![faygo apidoc](https://github.com/henrylee2cn/faygo/raw/master/doc/apidoc.png)
 
-![thinkgo index](https://github.com/henrylee2cn/thinkgo/raw/master/doc/index.png)
+![faygo server](https://github.com/henrylee2cn/faygo/raw/master/doc/server.png)
 
-# 框架下载
+
+## Latest version
+
+### Version
+
+v1.0
+
+### Requirements
+
+Go Version ≥1.8
+
+## Quick Start
+
+- Way 1: download source
 
 ```sh
-go get -u -v github.com/henrylee2cn/thinkgo
+go get -u -v github.com/henrylee2cn/faygo
 ```
 
-# 安装要求
+- Way 2: deployment tools ([Go to fay](https://github.com/henrylee2cn/fay))
 
-Go Version ≥1.6
-
-# 最新功能特性
-
-- 面向Handler接口开发（func or struct），中间件与操作完全等同可任意拼接路由操作链
-- 支持用struct Handler在Tag标签定义请求参数信息及其校验信息
-- 由struct Handler自动构建API文档（swagger2.0）
-- 支持HTTP/HTTP2、HTTPS(tls/letsencrypt)、UNIX多种Server类型
-- 支持多实例运行，且配置信息相互独立
-- 支持同一实例监听多Server类型、多端口
-- 基于著名的httprouter构建路由器，且支持链式与树形两种路由注册风格
-- 跨平台的彩色日志系统，且同时支持console和file两种输出形式（可以同时使用）
-- 提供Session管理功能
-- 支持Gzip全局配置
-- 提供XSRF跨站请求伪造安全过滤
-- 提供静态文件缓存功能
-- 排版漂亮的配置文件，且自动补填默认值方便设置
-
-
-# 代码示例
+```sh
+go get -u -v github.com/henrylee2cn/fay
 ```
+
+```
+        fay command [arguments]
+
+The commands are:
+        new        create, compile and run (monitor changes) a new faygo project
+        run        compile and run (monitor changes) an any existing go project
+
+fay new appname [apptpl]
+        appname    specifies the path of the new faygo project
+        apptpl     optionally, specifies the faygo project template type
+
+fay run [appname]
+        appname    optionally, specifies the path of the new project
+```
+
+## Features
+
+- One `struct Handler` can get more things:
+ * Define Handler/Middleware
+ * Bind and verify request parameters
+ * Generate an online document for the Swagger 2.0 API
+ * Database ORM mapping
+
+- Handler and Middleware are exactly the same, both implement the Handler interface (`func` or` struct`), which together constitute the handler chain of the router.
+- Supports multiple network types:
+
+Network types                                 | Configuration `net_types`
+----------------------------------------------|----------------
+HTTP                                          | `http`
+HTTPS/HTTP2(TLS)                              | `https`
+HTTPS/HTTP2(Let's Encrypt TLS)                | `letsencrypt`
+HTTPS/HTTP2(Let's Encrypt TLS on UNIX socket) | `unix_letsencrypt`
+HTTP(UNIX socket)                             | `unix_http`
+HTTPS/HTTP2(TLS on UNIX socket)               | `unix_https`
+
+- Support single-service & single-listener, single-service & multi-listener, multi-service & multi-listener and so on. The configuration of multiple services is independent of each other.
+- The high-performance router based on `httprouter` supports both chain and tree registration styles; supports flexible static file router (such as DirFS, RenderFS, MarkdownFS, etc.).
+- Support graceful shutdown and rebooting, provide fay tools which has new projects, hot compilation , meta programming function.
+- Use the most powerful `pongo2` as the HTML rendering engine.
+- Support near-LRU memory caching. (mainly used for static file cache)
+- Support cross-platform color log system, and has two output interface(console and file).
+- Support session management.
+- Support global gzip compression configuration.
+- Support XSRF security filtering.
+- Most features try to use simple ini configurations to avoid unnecessary recompilation, and these profiles can be automatically assigned default values.
+- Provide `gorm`, ` xorm`, `sqlx`, ` directSQL`, `Websocket`, ` ini`, `http client` and many other commonly used expansion packages.
+
+![faygo handler multi-usage](https://github.com/henrylee2cn/faygo/raw/master/doc/MultiUsage.png)
+
+## Simple example
+
+```go
 package main
 
 import (
-    "github.com/henrylee2cn/thinkgo"
+    // "mime/multipart"
     "time"
+    "github.com/henrylee2cn/faygo"
 )
 
 type Index struct {
-    Id        int      `param:"in(path),required,desc(ID),range(0:10)"`
-    Title     string   `param:"in(query),nonzero"`
-    Paragraph []string `param:"in(query),name(p),len(1:10)" regexp:"(^[\\w]*$)"`
-    Cookie    string   `param:"in(cookie),name(thinkgoID)"`
-    // Picture         multipart.FileHeader `param:"in(formData),name(pic),maxmb(30)"`
+    Id        int      `param:"<in:path> <required> <desc:ID> <range: 0:10>"`
+    Title     string   `param:"<in:query> <nonzero>"`
+    Paragraph []string `param:"<in:query> <name:p> <len: 1:10> <regexp: ^[\\w]*$>"`
+    Cookie    string   `param:"<in:cookie> <name:faygoID>"`
+    // Picture         *multipart.FileHeader `param:"<in:formData> <name:pic> <maxmb:30>"`
 }
 
-func (i *Index) Serve(ctx *thinkgo.Context) error {
-    if ctx.CookieParam("thinkgoID") == "" {
-        ctx.SetCookie("thinkgoID", time.Now().String())
+func (i *Index) Serve(ctx *faygo.Context) error {
+    if ctx.CookieParam("faygoID") == "" {
+        ctx.SetCookie("faygoID", time.Now().String())
     }
     return ctx.JSON(200, i)
 }
 
 func main() {
-  app := thinkgo.New("myapp", "0.1")
+    app := faygo.New("myapp", "0.1")
 
-  // Register the route in a chain style
-  app.GET("/index/:id", new(Index))
+    // Register the route in a chain style
+    app.GET("/index/:id", new(Index))
 
-  // Register the route in a tree style
-  // app.Route(
-  //   app.NewGET("/index/:id", new(Index)),
-  // )
+    // Register the route in a tree style
+    // app.Route(
+    //     app.NewGET("/index/:id", new(Index)),
+    // )
 
-  // Start the service
-  app.Run()
+    // Start the service
+    faygo.Run()
 }
 
 /*
@@ -84,92 +132,228 @@ http GET:
     http://localhost:8080/index/1?title=test&p=abc&p=xyz
 response:
     {
-      "Id": 1,
-      "Title": "test",
-      "Paragraph": [
-        "abc",
-        "xyz"
-      ],
-      "Cookie": "2016-11-13 01:14:40.9038005 +0800 CST"
+        "Id": 1,
+        "Title": "test",
+        "Paragraph": [
+            "abc",
+            "xyz"
+        ],
+        "Cookie": "2016-11-13 01:14:40.9038005 +0800 CST"
     }
 */
 ```
-[完整demo示例](https://github.com/henrylee2cn/thinkgo/raw/master/demo)
 
-# 配置文件说明
+[All samples](https://github.com/henrylee2cn/faygo/raw/master/samples)
 
-- 应用的各实例均有单独一份配置，其文件名格式 `config/{appname}[_{version}].ini`，配置详情：
+## Handler and middleware
 
-```
-net_types              = normal|tls              # 多种Server类型列表，支持 normal | tls | letsencrypt | unix
-addrs                  = 0.0.0.0:80|0.0.0.0:443  # 多个监听地址列表
-tls_certfile           =                         # TLS证书文件路径
-tls_keyfile            =                         # TLS密钥文件路径
-letsencrypt_file       =                         # SSL免费证书路径
-unix_filemode          = 438                     # UNIX Server的文件权限（438即0666）
-read_timeout           = 0                       # 读取请求数据超时
-write_timeout          = 0                       # 写入响应数据超时
-multipart_maxmemory_mb = 32                      # 接收上传文件时允许使用的最大内存
+Handler and middleware are the same, both implemente Handler interface!
 
-[router]                                         # 路由配置区
-redirect_trailing_slash   = true                 # 当前请求含`/`后缀的URL如`/foo/`时，若路由不存在但`/foo`，则自动跳转至`/foo`
-redirect_fixed_path       = true                 # 自动修复URL，如`/FOO` `/..//Foo`均被跳转至`/foo`（依赖redirect_trailing_slash=true）
-handle_method_not_allowed = true                 # 若开启，当前请求方法不存在时返回405，否则返回404
-handle_options            = true                 # 若开启，自动应答OPTIONS类请求，可在Thinkgo中设置默认Handler
+- function type
 
-[xsrf]                                           # XSRF跨站请求伪造过滤配置区
-enable = false                                   # 是否开启
-key    = thinkgoxsrf                             # 加密key
-expire = 3600                                    # xsrf防伪token有效时长
+```go
+// Page handler doesn't contains API doc description
+func Page() faygo.HandlerFunc {
+    return func(ctx *faygo.Context) error {
+        return ctx.String(200, "faygo")
+    }
+}
 
-[session]                                        # Session配置区（详情参考beego session模块）
-enable                 = false                   # 是否开启
-provider               = memory                  # 数据存储方式
-name                   = thinkgosessionID        # 客户端存储cookie的名字
-gc_max_lifetime        = 3600                    # 触发GC的时间
-provider_config        =                         # 配置信息，根据不同的引擎设置不同的配置信息
-cookie_lifetime        = 0                       # 客户端存储的cookie的时间，默认值是0，即浏览器生命周期
-auto_setcookie         = true                    # 是否自动设置关于session的cookie值，一般默认true
-domain                 =                         # 可以访问此cookie的域名
-enable_sid_in_header   = false                   # 是否将session ID写入Header
-name_in_header         = Thinkgosessionid        # 将session ID写入Header时的头名称
-enable_sid_in_urlquery = false                   # 是否将session ID写入url的query部分
-
-[apidoc]                                         # API文档
-enable      = true                               # 是否启用
-path        = /apidoc                            # 访问的URL路径
-nolimit     = false                              # 是否不限访问IP
-real_ip     = false                              # 使用真实客户端的IP进行过滤
-whitelist   = 192.*|202.122.246.170              # 表示允许带有`192.`前缀或等于`202.122.246.170`的IP访问
-desc        =                                    # 项目描述
-email       =                                    # 联系人邮箱
-terms_url   =                                    # 服务条款URL
-license     =                                    # 协议类型
-license_url =                                    # 协议内容URL
+// Page2 handler contains API doc description
+var Page2 = faygo.WrapDoc(Page(), "test page2 notes", "test")
 ```
 
-- 应用只有一份全局配置，文件名为 `config/__global__.ini`，配置详情：
+- struct type
+
+```go
+// Param binds and validates the request parameters by Tags
+type Param struct {
+    Id    int    `param:"<in:path> <required> <desc:ID> <range: 0:10>"`
+    Title string `param:"<in:query>"`
+}
+
+// Serve implemente Handler interface
+func (p *Param) Serve(ctx *faygo.Context) error {
+    return ctx.JSON(200,
+        faygo.Map{
+            "Struct Params":    p,
+            "Additional Param": ctx.PathParam("additional"),
+        }, true)
+}
+
+// Doc implemente API Doc interface (optional)
+func (p *Param) Doc() faygo.Doc {
+    return faygo.Doc{
+        // Add the API notes to the API doc
+        Note: "param desc",
+        // declare the response content format to the API doc
+        Return: faygo.JSONMsg{
+            Code: 1,
+            Info: "success",
+        },
+        // additional request parameter declarations to the API doc (optional)
+        Params: []faygo.ParamInfo{
+            {
+                Name:  "additional",
+                In:    "path",
+                Model: "a",
+                Desc:  "defined by the `Doc()` method",
+            },
+        },
+    }
+}
+```
+
+## Filter function
+
+The filter function must be HandleFunc type!
+
+```go
+func Root2Index(ctx *faygo.Context) error {
+    // Direct access to `/index` is not allowed
+    if ctx.Path() == "/index" {
+        ctx.Stop()
+        return nil
+    }
+    if ctx.Path() == "/" {
+        ctx.ModifyPath("/index")
+    }
+    return nil
+}
+```
+
+## Route registration
+
+- tree style
+
+```go
+// New application object, params: name, version
+var app1 = faygo.New("myapp1", "1.0")
+
+// router
+app1.Filter(Root2Index).
+    Route(
+        app1.NewNamedGET("test page", "/page", Page()),
+        app1.NewNamedGET("test page2", "/page2", Page2),
+        app1.NewGroup("home",
+            app1.NewNamedGET("test param", "/param", &Param{
+                // sets the default value in the API documentation for the request parameters (optional)
+                Id:    1,
+                Title: "test param",
+            }),
+        ),
+    )
+```
+
+- chain style
+
+```go
+// New application object, params: name, version
+var app2 = faygo.New("myapp2", "1.0")
+
+// router
+app2.Filter(Root2Index)
+app2.NamedGET("test page", "/page", Page())
+app2.NamedGET("test page2", "/page2", Page2)
+app2.Group("home")
+{
+    app2.NamedGET("test param", "/param", &Param{
+        // sets the default value in the API documentation for the request parameters(optional)
+        Id:    1,
+        Title: "test param",
+    })
+}
+```
+
+## Shutdown and reboot
+
+- shutdown gracefully
+
+```sh
+kill [pid]
+```
+
+- reboot gracefully
+
+```sh
+kill -USR2 [pid]
+```
+
+## Configuration
+
+- Each instance of the application has a single configuration (file name format `config/{appname}[_{version}].ini`). Refer to the following:
 
 ```
-[cache]                                          # 文件内存缓存配置区
-enable  = false                                  # 是否开启
-size_mb = 32                                     # 允许缓存使用的最大内存（单位MB），为0时系统自动设置为512KB
-expire  = 60                                     # 缓存最大时长
+net_types              = http|https              # List of network type: http | https | unix_http | unix_https | letsencrypt | unix_letsencrypt
+addrs                  = 0.0.0.0:80|0.0.0.0:443  # List of multiple listening addresses
+tls_certfile           =                         # TLS certificate file path
+tls_keyfile            =                         # TLS key file path
+letsencrypt_dir        =                         # Let's Encrypt TLS certificate cache directory
+unix_filemode          = 438                     # File permissions for UNIX listener (438 equivalent to 0666)
+read_timeout           = 0                       # Maximum duration for reading the full request (including body)
+write_timeout          = 0                       # Maximum duration for writing the full response (including body)
+multipart_maxmemory_mb = 32                      # Maximum size of memory that can be used when receiving uploaded files
 
-[gzip]                                           # gzip压缩配置区
-enable         = false                           # 是否开启
-min_length     = 20                              # 进行压缩的最小内容长度
-compress_level = 1                               # 非文件类响应Body的压缩水平（0-9），注意文件压缩始终为最优压缩比（9）
-methods        = GET                             # 允许压缩的请求方法，为空时默认为GET
+[router]                                         # Routing configuration section
+redirect_trailing_slash   = true                 # Automatic redirection (for example, `/foo/` -> `/foo`)
+redirect_fixed_path       = true                 # Tries to fix the current request path, if no handle is registered for it
+handle_method_not_allowed = true                 # Returns 405 if the requested method does not exist, otherwise returns 404
+handle_options            = true                 # Automatic response OPTIONS request, you can set the default Handler in Faygo
 
-[log]                                            # 日志配置区
-console_enable = true                            # 是否启用控制台日志
-console_level  = debug                           # 控制台日志打印水平
-file_enable    = true                            # 是否启用文件日志
-file_level     = debug                           # 文件日志打印水平
+[xsrf]                                           # XSRF security section
+enable = false                                   # Whether enabled or not
+key    = faygoxsrf                             # Encryption key
+expire = 3600                                    # Expire of XSRF token
+
+[session]                                        # Session section
+enable                 = false                   # Whether enabled or not
+provider               = memory                  # Data storage
+name                   = faygosessionID        # The client stores the name of the cookie
+gc_max_lifetime        = 3600                    # The interval between triggering the GC
+provider_config        =                         # According to the different engine settings different configuration information
+cookie_lifetime        = 0                       # The default value is 0, which is the lifetime of the browser
+auto_setcookie         = true                    # Automatically set on the session cookie value, the general default true
+domain                 =                         # The domain name that is allowed to access this cookie
+enable_sid_in_header   = false                   # Whether to write a session ID to the header
+name_in_header         = Faygosessionid        # The name of the header when the session ID is written to the header
+enable_sid_in_urlquery = false                   # Whether to write the session ID to the URL Query params
+
+[apidoc]                                         # API documentation section
+enable      = true                               # Whether enabled or not
+path        = /apidoc                            # The URL path
+nolimit     = false                              # If true, access is not restricted
+real_ip     = false                              # If true, means verifying the real IP of the visitor
+whitelist   = 192.*|202.122.246.170              # `whitelist=192.*|202.122.246.170` means: only IP addresses that are prefixed with `192 'or equal to` 202.122.246.170' are allowed
+desc        =                                    # Description of the application
+email       =                                    # Technician's Email
+terms_url   =                                    # Terms of service
+license     =                                    # The license used by the API
+license_url =                                    # The URL of the protocol content page
 ```
 
-# Handler结构体字段标签说明
+- Only one global configuration is applied (`config/__global__.ini`). Refer to the following:
+
+```
+[cache]                                          # Cache section
+enable  = false                                  # Whether enabled or not
+size_mb = 32                                     # Max size by MB for file cache, the cache size will be set to 512KB at minimum.
+expire  = 60                                     # Maximum duration for caching
+
+[gzip]                                           # compression section
+enable         = false                           # Whether enabled or not
+min_length     = 20                              # The minimum length of content to be compressed
+compress_level = 1                               # Non-file response Body's compression level is 0-9, but the files' always 9
+methods        = GET                             # List of HTTP methods to compress. If not set, only GET requests are compressed.
+
+[log]                                            # Log section
+console_enable = true                            # Whether enabled or not console logger
+console_level  = debug                           # Console logger level
+file_enable    = true                            # Whether enabled or not file logger
+file_level     = debug                           # File logger level
+async_len      = 0                               # The length of asynchronous buffer, 0 means synchronization
+```
+
+## Handler struct tags
 
 tag   |   key    | required |     value     |   desc
 ------|----------|----------|---------------|----------------------------------
@@ -178,38 +362,38 @@ param |    in    | only one |     query     | (position of param) e.g. url: "htt
 param |    in    | only one |     formData  | (position of param) e.g. "request body: a=123&b={formData}"
 param |    in    | only one |     body      | (position of param) request body can be any content
 param |    in    | only one |     header    | (position of param) request header info
-param |    in    | only one |     cookie    | (position of param) request cookie info, support: `http.Cookie`, `fasthttp.Cookie`, `string`, `[]byte` and so on
-param |   name   |    no    |  (e.g. "id")  | specify request param`s name
-param | required |    no    |   required    | request param is required
-param |   desc   |    no    |  (e.g. "id")  | request param description
-param |   len    |    no    | (e.g. 3:6, 3) | length range of param's value
-param |   range  |    no    |  (e.g. 0:10)  | numerical range of param's value
-param |  nonzero |    no    |    nonzero    | param`s value can not be zero
-param |   maxmb  |    no    |   (e.g. 32)   | when request Content-Type is multipart/form-data, the max memory for body.(multi-param, whichever is greater)
-regexp|          |    no    |(e.g. "^\\w+$")| param value can not be null
-err   |          |    no    |(e.g. "incorrect password format")| customize the prompt for validation error
+param |    in    | only one |     cookie    | (position of param) request cookie info, support: `*http.Cookie`,`http.Cookie`,`string`,`[]byte`
+param |   name   |    no    |   (e.g.`id`)   | specify request param`s name
+param | required |    no    |               | request param is required
+param |   desc   |    no    |   (e.g.`id`)   | request param description
+param |   len    |    no    | (e.g.`3:6` `3`) | length range of param's value
+param |   range  |    no    |  (e.g.`0:10`)  | numerical range of param's value
+param |  nonzero |    no    |               | param`s value can not be zero
+param |   maxmb  |    no    |   (e.g.`32`)   | when request Content-Type is multipart/form-data, the max memory for body.(multi-param, whichever is greater)
+param |  regexp  |    no    | (e.g.`^\\w+$`) | verify the value of the param with a regular expression(param value can not be null)
+param |   err    |    no    |(e.g.`incorrect password format`)| the custom error for binding or validating
 
 **NOTES**:
 * the binding object must be a struct pointer
-* the binding struct's field can not be a pointer
+* in addition to `*multipart.FileHeader`, the binding struct's field can not be a pointer
 * `regexp` or `param` tag is only usable when `param:"type(xxx)"` is exist
 * if the `param` tag is not exist, anonymous field will be parsed
-* when the param's position(`in`) is `formData` and the field's type is `multipart.FileHeader`, the param receives file uploaded
-* if param's position(`in`) is `cookie`, field's type must be `http.Cookie`
+* when the param's position(`in`) is `formData` and the field's type is `*multipart.FileHeader`, `multipart.FileHeader`, `[]*multipart.FileHeader` or `[]multipart.FileHeader`, the param receives file uploaded
+* if param's position(`in`) is `cookie`, field's type must be `*http.Cookie` or `http.Cookie`
 * param tags `in(formData)` and `in(body)` can not exist at the same time
 * there should not be more than one `in(body)` param tag
 
-# Handler结构体字段类型说明
+## Handler struct fields type
 
 base    |   slice    | special
 --------|------------|-------------------------------------------------------
 string  |  []string  | [][]byte
 byte    |  []byte    | [][]uint8
-uint8   |  []uint8   | multipart.FileHeader (only for `formData` param)
-bool    |  []bool    | http.Cookie (only for `net/http`'s `cookie` param)
-int     |  []int     | fasthttp.Cookie (only for `fasthttp`'s `cookie` param)
-int8    |  []int8    | struct (struct type only for `body` param or as an anonymous field to extend params)
-int16   |  []int16   |
+uint8   |  []uint8   | *multipart.FileHeader (only for `formData` param)
+bool    |  []bool    | []*multipart.FileHeader (only for `formData` param)
+int     |  []int     | *http.Cookie (only for `net/http`'s `cookie` param)
+int8    |  []int8    | http.Cookie (only for `net/http`'s `cookie` param)
+int16   |  []int16   | struct (struct type only for `body` param or as an anonymous field to extend params)
 int32   |  []int32   |
 int64   |  []int64   |
 uint8   |  []uint8   |
@@ -219,18 +403,25 @@ uint64  |  []uint64  |
 float32 |  []float32 |
 float64 |  []float64 |
 
-# 扩展包
-- [各种条码](https://github.com/henrylee2cn/thinkgo/raw/master/ext/barcode):       `github.com/henrylee2cn/thinkgo/ext/barcode`
-- [比特单位](https://github.com/henrylee2cn/thinkgo/raw/master/ext/bitconv):       `github.com/henrylee2cn/thinkgo/ext/bitconv`
-- [定时器](https://github.com/henrylee2cn/thinkgo/raw/master/ext/cron):            `github.com/henrylee2cn/thinkgo/ext/cron`
-- [gorm数据库引擎](https://github.com/henrylee2cn/thinkgo/raw/master/ext/db/gorm): `github.com/henrylee2cn/thinkgo/ext/db/gorm`
-- [sqlx数据库引擎](https://github.com/henrylee2cn/thinkgo/raw/master/ext/db/sqlx): `github.com/henrylee2cn/thinkgo/ext/db/sqlx`
-- [xorm数据库引擎](https://github.com/henrylee2cn/thinkgo/raw/master/ext/db/xorm): `github.com/henrylee2cn/thinkgo/ext/db/xorm`
-- [口令算法](https://github.com/henrylee2cn/thinkgo/raw/master/ext/otp):           `github.com/henrylee2cn/thinkgo/ext/otp`
-- [UUID](https://github.com/henrylee2cn/thinkgo/raw/master/ext/uuid):              `github.com/henrylee2cn/thinkgo/ext/uuid`
-- [Websocket](https://github.com/henrylee2cn/thinkgo/raw/master/ext/websocket):    `github.com/henrylee2cn/thinkgo/ext/websocket`
-- [ini配置](https://github.com/henrylee2cn/thinkgo/raw/master/ini):                `github.com/henrylee2cn/thinkgo/ini`
+## Expansion package
+
+package summary  |  import path
+-----------------|-----------------------------------------------------------------------------------------------------------------
+[barcode](https://github.com/henrylee2cn/faygo/raw/master/ext/barcode)             | `github.com/henrylee2cn/faygo/ext/barcode`
+[Bit unit conversion](https://github.com/henrylee2cn/faygo/raw/master/ext/bitconv) | `github.com/henrylee2cn/faygo/ext/bitconv`
+[gorm(DB ORM)](https://github.com/henrylee2cn/faygo/raw/master/ext/db/gorm)        | `github.com/henrylee2cn/faygo/ext/db/gorm`
+[sqlx(DB ext)](https://github.com/henrylee2cn/faygo/raw/master/ext/db/sqlx)        | `github.com/henrylee2cn/faygo/ext/db/sqlx`
+[xorm(DB ORM)](https://github.com/henrylee2cn/faygo/raw/master/ext/db/xorm)        | `github.com/henrylee2cn/faygo/ext/db/xorm`
+[directSQL(Configured SQL engine)](https://github.com/henrylee2cn/faygo/raw/master/ext/db/directsql) | `github.com/henrylee2cn/faygo/ext/db/directsql`
+[One-time Password](https://github.com/henrylee2cn/faygo/raw/master/ext/otp)       | `github.com/henrylee2cn/faygo/ext/otp`
+[UUID](https://github.com/henrylee2cn/faygo/raw/master/ext/uuid)                   | `github.com/henrylee2cn/faygo/ext/uuid`
+[Websocket](https://github.com/henrylee2cn/faygo/raw/master/ext/websocket)         | `github.com/henrylee2cn/faygo/ext/websocket`
+[ini](https://github.com/henrylee2cn/faygo/raw/master/ini)                         | `github.com/henrylee2cn/faygo/ini`
+[cron](https://github.com/henrylee2cn/faygo/raw/master/ext/cron)                   | `github.com/henrylee2cn/faygo/ext/cron`
+[task](https://github.com/henrylee2cn/faygo/raw/master/ext/task)                   | `github.com/henrylee2cn/faygo/ext/task`
+[http client](https://github.com/henrylee2cn/faygo/raw/master/ext/surfer)          | `github.com/henrylee2cn/faygo/ext/surfer`
 
 
-# 开源协议
-Thinkgo 项目采用商业应用友好的 [Apache2.0](https://github.com/henrylee2cn/thinkgo/raw/master/LICENSE) 协议发布。
+## License
+
+Faygo is under Apache v2 License. See the [LICENSE](https://github.com/henrylee2cn/faygo/raw/master/LICENSE) file for the full license text.

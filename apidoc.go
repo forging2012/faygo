@@ -14,29 +14,52 @@
 
 // API automation documentation.
 
-package thinkgo
+package faygo
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
+	"net/http"
 	"path"
+	"regexp"
 	"strings"
 
-	"github.com/henrylee2cn/thinkgo/swagger"
+	"github.com/henrylee2cn/faygo/swagger"
 )
+
+type swaggerFS struct {
+	jsonPath []byte
+	http.FileSystem
+}
+
+func (s *swaggerFS) Open(name string) (http.File, error) {
+	f, err := s.FileSystem.Open(name)
+	if err == nil && name == "/index.html" {
+		b, err := ioutil.ReadAll(f)
+		f.Close()
+		if err != nil {
+			return f, err
+		}
+		b = bytes.Replace(b, []byte(`"/swagger.json"`), s.jsonPath, -1)
+		info, err := swagger.AssetInfo("swagger-ui/index.html")
+		return NewFile(b, info), err
+	}
+	return f, err
+}
 
 // register the API doc router.
 func (frame *Framework) regAPIdoc() {
-	frame.config.APIdoc.Path = path.Join("/", frame.config.APIdoc.Path)
-	// jsonPattern := strings.TrimRight(strings.Replace(frame.config.APIdoc.Path, "/*filepath", "", -1), "/") + ".json"
-	jsonPattern := "/swagger.json"
+	swaggerPath := frame.swaggerPath()
+	fs := FS(&swaggerFS{jsonPath: []byte("\"" + swaggerPath + "\""), FileSystem: swagger.AssetFS()})
 	if frame.config.APIdoc.NoLimit {
-		frame.MuxAPI.NamedStaticFS("APIdoc-Swagger", frame.config.APIdoc.Path, swagger.AssetFS())
-		frame.MuxAPI.NamedGET("APIdoc-Swagger-JSON", jsonPattern, newAPIdocJSONHandler())
+		frame.MuxAPI.NamedStaticFS("APIdoc-Swagger", frame.config.APIdoc.Path, fs)
+		frame.MuxAPI.NamedGET("APIdoc-Swagger-JSON", swaggerPath, newAPIdocJSONHandler())
 	} else {
-		allowApidoc := NewIPFilter(frame.config.APIdoc.Whitelist, frame.config.APIdoc.RealIP)
-		frame.MuxAPI.NamedStaticFS("APIdoc-Swagger", frame.config.APIdoc.Path, swagger.AssetFS()).Use(allowApidoc)
-		frame.MuxAPI.NamedGET("APIdoc-Swagger-JSON", jsonPattern, newAPIdocJSONHandler(), allowApidoc)
+		allowApidoc := newIPFilter(frame.config.APIdoc.Whitelist, frame.config.APIdoc.RealIP)
+		frame.MuxAPI.NamedStaticFS("APIdoc-Swagger", frame.config.APIdoc.Path, fs).Use(allowApidoc)
+		frame.MuxAPI.NamedGET("APIdoc-Swagger-JSON", swaggerPath, newAPIdocJSONHandler(), allowApidoc)
 	}
 
 	tip := `APIdoc's URL path is '` + frame.config.APIdoc.Path
@@ -62,14 +85,8 @@ func newAPIdocJSONHandler() HandlerFunc {
 	}
 }
 
-var apiStaticParam = &swagger.Parameter{
-	In:          "path",
-	Name:        "filepath",
-	Type:        swagger.ParamType("*"),
-	Description: "any static path or file",
-	Required:    true,
-	Format:      fmt.Sprintf("%T", "*"),
-	Default:     "",
+func (frame *Framework) swaggerPath() string {
+	return strings.TrimRight(frame.config.APIdoc.Path, "/") + "_swagger.json"
 }
 
 func (frame *Framework) initAPIdoc(host string) {
@@ -100,8 +117,12 @@ func (frame *Framework) initAPIdoc(host string) {
 		// Definitions:         map[string]Definition{},
 		// ExternalDocs:        map[string]string{},
 	}
-
+	jsonPattern := frame.swaggerPath()
 	for _, child := range rootMuxAPI.Children() {
+		// filter useless API
+		if (child.pattern == jsonPattern || strings.HasPrefix(child.pattern, frame.config.APIdoc.Path)) && child.HasMethod("GET") {
+			continue
+		}
 		if !child.IsGroup() {
 			addpath(child, rootTag)
 			continue
@@ -217,7 +238,15 @@ func addpath(mux *MuxAPI, tag *swagger.Tag) {
 
 		// static file
 		if strings.HasSuffix(pid, "/{filepath}") {
-			o.Parameters = append(o.Parameters, apiStaticParam)
+			o.Parameters = append(o.Parameters, &swagger.Parameter{
+				In:          "path",
+				Name:        "filepath",
+				Type:        swagger.ParamType("*"),
+				Description: "any static path or file",
+				Required:    true,
+				Format:      fmt.Sprintf("%T", "*"),
+				Default:     "",
+			})
 		}
 
 		operas[strings.ToLower(method)] = o
@@ -246,20 +275,19 @@ func apiDefinitions(mux *MuxAPI, pname, method string, format interface{}) (ref 
 	return
 }
 
+var (
+	pathWildcardRegexp = regexp.MustCompile(`/\*[^/]*`)
+	pathColonRegexp    = regexp.MustCompile(`/:[^/]*`)
+)
+
 func apiCreatePath(u string) string {
-	a := strings.Split(u, "/*")
-	if len(a) > 1 {
-		u = path.Join(a[0], "{filepath}")
+	for _, wildcard := range pathWildcardRegexp.FindAllString(u, -1) {
+		u = strings.Replace(u, wildcard, "/{"+wildcard[2:]+"}", -1)
 	}
-	s := strings.Split(u, "/:")
-	p := s[0]
-	if len(s) == 1 {
-		return p
+	for _, colon := range pathColonRegexp.FindAllString(u, -1) {
+		u = strings.Replace(u, colon, "/{"+colon[2:]+"}", -1)
 	}
-	for _, param := range s[1:] {
-		p = path.Join(p, "{"+param+"}")
-	}
-	return p
+	return u
 }
 
 func apiTagDesc(desc string) string {
@@ -279,10 +307,14 @@ func apiDesc(notes []Notes) string {
 		}
 		if n.Note != "" {
 			desc += fmt.Sprintf("\nNote: %s", strings.TrimSpace(n.Note))
+		} else {
+			desc += "\nNote:"
 		}
-		if n.Return != "" {
+		if n.Return != nil {
 			b, _ := json.MarshalIndent(n.Return, "", "  ")
 			desc += fmt.Sprintf("\nReturn: %s", string(b))
+		} else {
+			desc += "\nReturn:"
 		}
 	}
 	if desc != "" {
